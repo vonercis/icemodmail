@@ -154,7 +154,7 @@ class ReviewReasonModal(discord.ui.Modal, title="Review Decision"):
         label="Message to applicant",
         style=discord.TextStyle.paragraph,
         placeholder="This will be sent directly to the applicant.",
-        required=True,
+        required=False,
         max_length=1000,
     )
 
@@ -198,6 +198,30 @@ class IcelandairCareers(commands.Cog):
         async for app in self.coll.find({"type": "application", "status": "pending"}):
             view = ReviewView(app["application_id"])
             self.bot.add_view(view)
+
+    @commands.Cog.listener()
+    async def on_thread_initiate(self, thread, creator, category, initial_message):
+        """
+        Cancel Modmail thread creation if the user is mid-application.
+        on_thread_initiate fires before the channel is created, so removing
+        the thread from the cache here aborts the setup process.
+        """
+        if creator.id not in self.active_sessions:
+            return
+
+        try:
+            self.bot.threads.cache.pop(creator.id, None)
+        except Exception:
+            pass
+
+        try:
+            await creator.send(
+                f"{EMOJI_ALERT} Your message was not forwarded to the team — "
+                "you have an active application in progress. "
+                "Please complete your application via the questions above."
+            )
+        except discord.Forbidden:
+            pass
 
     # ── DB helpers ────────────────────────────────────────────────────────────
 
@@ -524,9 +548,6 @@ class IcelandairCareers(commands.Cog):
         await interaction.response.send_modal(modal)
         await modal.wait()
 
-        if modal.submitted_message is None:
-            return
-
         status = "accepted" if accepted else "declined"
         color = 0x57F287 if accepted else 0xED4245
         result_word = "Accepted" if accepted else "Declined"
@@ -546,13 +567,11 @@ class IcelandairCareers(commands.Cog):
 
         # DM applicant
         applicant = self.bot.get_user(app["user_id"])
-        if applicant:
+        if applicant and modal.submitted_message:
+            description = f"Thank you for applying for the **{app['job_title']}** position.\n\n{modal.submitted_message}"
             dm_embed = discord.Embed(
                 title=f"{EMOJI_ALERT} Application {result_word}",
-                description=(
-                    f"Thank you for applying for the **{app['job_title']}** position.\n\n"
-                    f"{modal.submitted_message}"
-                ),
+                description=description,
                 color=color,
                 timestamp=utcnow(),
             )
@@ -580,8 +599,9 @@ class IcelandairCareers(commands.Cog):
         disabled_view.add_item(decline_btn)
 
         await interaction.message.edit(embed=original_embed, view=disabled_view)
+        notified = " The applicant has been notified." if applicant and modal.submitted_message else ""
         await interaction.followup.send(
-            f"✅ Application `{application_id}` has been **{status}**. The applicant has been notified.",
+            f"✅ Application `{application_id}` has been **{status}**.{notified}",
             ephemeral=True,
         )
 
