@@ -68,9 +68,11 @@ async def create_member(discord_id: int, roblox_id: int, roblox_username: str) -
         "flights_completed":     0,
         "last_flight":           None,
         "flight_history":        [],
-        "complimentary_upgrades": 0,
-        "upgrade_last_reset":    now,
-        "internal_notes":        [],
+        "complimentary_upgrades":        0,
+        "upgrade_last_reset":            now,
+        "saga_class_flights_remaining":  0,
+        "saga_class_last_reset":         now,
+        "internal_notes":                [],
     }
     await members.insert_one(doc)
     return doc
@@ -230,3 +232,75 @@ async def delete_note(discord_id: int, note_index: int) -> dict:
         {"$set": {"internal_notes": notes}}
     )
     return {**member, "internal_notes": notes}
+
+
+SAGA_CLASS_ALLOWANCE = {
+    "blue":   0,
+    "silver": 2,
+    "gold":   5,
+}
+
+
+async def get_saga_class_remaining(discord_id: int) -> int:
+    member = await get_member(discord_id)
+    if not member:
+        return 0
+    return member.get("saga_class_flights_remaining", 0)
+
+
+async def use_saga_class_flight(discord_id: int) -> bool:
+    """Deducts one Saga Class flight. Returns False if none remaining."""
+    member = await get_member(discord_id)
+    if not member:
+        return False
+    remaining = member.get("saga_class_flights_remaining", 0)
+    tier      = member.get("tier", "blue")
+    if tier == "gold":
+        return True  # Gold has 5/month but we still track usage
+    if remaining <= 0:
+        return False
+    await members.update_one(
+        {"discord_id": discord_id},
+        {"$inc": {"saga_class_flights_remaining": -1}}
+    )
+    return True
+
+
+async def restore_saga_class_flight(discord_id: int):
+    """Restores one Saga Class flight (e.g. after flight arrival deducts it)."""
+    member = await get_member(discord_id)
+    if not member:
+        return
+    tier      = member.get("tier", "blue")
+    allowance = SAGA_CLASS_ALLOWANCE.get(tier, 0)
+    current   = member.get("saga_class_flights_remaining", 0)
+    # Don't exceed monthly allowance
+    if current < allowance:
+        await members.update_one(
+            {"discord_id": discord_id},
+            {"$inc": {"saga_class_flights_remaining": -1}}
+        )
+
+
+async def set_saga_class_remaining(discord_id: int, count: int) -> dict:
+    member = await get_member(discord_id)
+    if not member:
+        return None
+    await members.update_one(
+        {"discord_id": discord_id},
+        {"$set": {"saga_class_flights_remaining": count}}
+    )
+    return {**member, "saga_class_flights_remaining": count}
+
+
+async def reset_saga_class_monthly():
+    """Resets saga class flight allowances for all members based on their tier."""
+    now = datetime.now(timezone.utc)
+    for tier, allowance in SAGA_CLASS_ALLOWANCE.items():
+        await members.update_many(
+            {"tier": tier},
+            {"$set": {
+                "saga_class_flights_remaining": allowance,
+                "saga_class_last_reset":        now,
+            }}
+        )
