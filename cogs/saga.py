@@ -9,7 +9,7 @@ from database import (
     set_upgrades, use_upgrade, add_note, delete_note,
     get_member_by_username, TIER_THRESHOLDS, EARNING_MULTIPLIERS, members as members_col
 )
-from bloxlink import get_roblox_user
+from bloxlink_api import get_roblox_user
 from dotenv import load_dotenv
 import math
 
