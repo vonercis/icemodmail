@@ -4,9 +4,9 @@ from discord import app_commands
 import os
 from datetime import datetime, timezone
 from database_flights import (
-    create_flight, get_flight, get_active_flights,
-    update_flight, set_board_message, purge_old_flights,
-    STATUSES, STATUS_COLORS, STATUS_EMOJI
+    create_flight, get_flight, get_active_flights, update_flight,
+    purge_old_flights, STATUSES, STATUS_COLORS, STATUS_EMOJI,
+    subscribe, unsubscribe, get_subscribers, clear_subscriptions,
 )
 from dotenv import load_dotenv
 
@@ -47,6 +47,8 @@ def fmt_time(val) -> str:
     return str(val)
 
 
+# ── Embed builders ────────────────────────────────────────────────────────────
+
 def build_main_board_embed(active_flights: list) -> discord.Embed:
     embed = discord.Embed(
         title="<:basiclogo:1374682220891209799> Icelandair Flight Board",
@@ -70,10 +72,7 @@ def build_main_board_embed(active_flights: list) -> discord.Embed:
                 inline=False,
             )
 
-    embed.set_footer(
-        text="Icelandair Operations • Updated",
-        icon_url="https://www.icelandair.com/favicon.ico"
-    )
+    embed.set_footer(text="Icelandair Operations • Updated", icon_url="https://www.icelandair.com/favicon.ico")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
@@ -84,7 +83,6 @@ def build_flight_embed(f: dict) -> discord.Embed:
     emoji  = STATUS_EMOJI.get(status, "🕐")
 
     checkin_str = "✅ Open" if f.get("checkin_open") else "❌ Closed"
-
     description = f"{emoji} **{status}**  ·  {f['date']}"
     if f.get("reason"):
         description += f"\n> {f['reason']}"
@@ -96,52 +94,142 @@ def build_flight_embed(f: dict) -> discord.Embed:
     )
     embed.set_thumbnail(url="https://www.icelandair.com/favicon.ico")
 
-    embed.add_field(
-        name="<:dblaptopbg:1374617774693023754> Aircraft",
-        value=f"{f.get('aircraft_type', '—')}\n`{f.get('registration', '—')}`",
-        inline=True,
-    )
-    embed.add_field(
-        name="<:lbcheckin:1374689021472669738> Check-in",
-        value=checkin_str,
-        inline=True,
-    )
+    embed.add_field(name="<:dblaptopbg:1374617774693023754> Aircraft",   value=f"{f.get('aircraft_type', '—')}\n`{f.get('registration', '—')}`", inline=True)
+    embed.add_field(name="<:lbcheckin:1374689021472669738> Check-in",    value=checkin_str, inline=True)
+
     eco   = f.get("economy_count", 0)
     prem  = f.get("premium_count", 0)
-    total = eco + prem
-    embed.add_field(
-        name="<:lbseated:1374689017777492019> Cabin",
-        value=f"Economy: **{eco}**\nSaga Premium: **{prem}**\nTotal: **{total}**",
-        inline=True,
-    )
-    embed.add_field(
-        name="<:dbtakeoffbg:1374617776504832001> Departure",
-        value=(
-            f"STD: **{fmt_time(f.get('std'))}**\n"
-            f"ETD: **{fmt_time(f.get('etd'))}**\n"
-            f"ATD: **{fmt_time(f.get('atd'))}**"
-        ),
-        inline=True,
-    )
-    embed.add_field(
-        name="🛬 Arrival",
-        value=(
-            f"STA: **{fmt_time(f.get('sta'))}**\n"
-            f"ETA: **{fmt_time(f.get('eta'))}**\n"
-            f"ATA: **{fmt_time(f.get('ata'))}**"
-        ),
-        inline=True,
-    )
-    embed.add_field(
-        name="⏱ Block Time",
-        value=f.get("block_time", "—"),
-        inline=True,
-    )
+    embed.add_field(name="<:lbseated:1374689017777492019> Cabin",        value=f"Economy: **{eco}**\nSaga Premium: **{prem}**\nTotal: **{eco+prem}**", inline=True)
+    embed.add_field(name="<:dbtakeoffbg:1374617776504832001> Departure", value=f"STD: **{fmt_time(f.get('std'))}**\nETD: **{fmt_time(f.get('etd'))}**\nATD: **{fmt_time(f.get('atd'))}**", inline=True)
+    embed.add_field(name="🛬 Arrival",                                   value=f"STA: **{fmt_time(f.get('sta'))}**\nETA: **{fmt_time(f.get('eta'))}**\nATA: **{fmt_time(f.get('ata'))}**", inline=True)
+    embed.add_field(name="⏱ Block Time",                                 value=f.get("block_time", "—"), inline=True)
 
-    embed.set_footer(
-        text="Icelandair Operations",
-        icon_url="https://www.icelandair.com/favicon.ico"
+    embed.set_footer(text="Icelandair Operations", icon_url="https://www.icelandair.com/favicon.ico")
+    embed.timestamp = datetime.now(timezone.utc)
+    return embed
+
+
+def build_announcement_embed(f: dict, event: str) -> discord.Embed:
+    """Builds a channel announcement embed for a flight event."""
+    status = f.get("status", "Scheduled")
+    color  = STATUS_COLORS.get(status, 0x003B6F)
+    fn     = f["flight_number"]
+    route  = f"{f['origin']} → {f['destination']}"
+
+    titles = {
+        "scheduled":  f"<:dbtakeoffbg:1374617776504832001> Flight Scheduled — {fn}",
+        "delayed":    f"⚠️ Flight Delayed — {fn}",
+        "cancelled":  f"❌ Flight Cancelled — {fn}",
+        "boarding":   f"🚪 Boarding Now — {fn}",
+        "departed":   f"✈️ Flight Departed — {fn}",
+        "arrived":    f"🛬 Flight Arrived — {fn}",
+        "checkin":    f"<:lbcheckin:1374689021472669738> Check-in Open — {fn}",
+        "update":     f"ℹ️ Flight Update — {fn}",
+    }
+
+    descriptions = {
+        "scheduled": f"**{fn}** {route} has been scheduled.\n**Date:** {f['date']} · **STD:** {fmt_time(f.get('std'))} · **STA:** {fmt_time(f.get('sta'))}",
+        "delayed":   f"**{fn}** {route} has been delayed.\n**New ETD:** {fmt_time(f.get('etd'))}" + (f"\n**Reason:** {f['reason']}" if f.get("reason") else ""),
+        "cancelled": f"**{fn}** {route} on **{f['date']}** has been cancelled." + (f"\n**Reason:** {f['reason']}" if f.get("reason") else ""),
+        "boarding":  f"**{fn}** {route} is now boarding.\n**Gate closes at:** {fmt_time(f.get('etd') or f.get('std'))}",
+        "departed":  f"**{fn}** {route} has departed.\n**ATD:** {fmt_time(f.get('atd'))} · **ETA:** {fmt_time(f.get('eta') or f.get('sta'))}",
+        "arrived":   f"**{fn}** {route} has arrived.\n**ATA:** {fmt_time(f.get('ata'))}",
+        "checkin":   f"Check-in is now open for **{fn}** {route}.\n**Date:** {f['date']} · **STD:** {fmt_time(f.get('std'))}",
+        "update":    f"**{fn}** {route} has been updated.",
+    }
+
+    embed = discord.Embed(
+        title=titles.get(event, titles["update"]),
+        description=descriptions.get(event, descriptions["update"]),
+        color=color,
     )
+    embed.set_thumbnail(url="https://www.icelandair.com/favicon.ico")
+    embed.set_footer(text="Icelandair Operations", icon_url="https://www.icelandair.com/favicon.ico")
+    embed.timestamp = datetime.now(timezone.utc)
+    return embed
+
+
+def build_subscriber_dm(f: dict, event: str, discord_id: int) -> discord.Embed:
+    """Builds a personalised DM embed for a subscriber."""
+    fn    = f["flight_number"]
+    route = f"{f['origin']} → {f['destination']}"
+    color = STATUS_COLORS.get(f.get("status", "Scheduled"), 0x003B6F)
+
+    if event == "cancelled":
+        embed = discord.Embed(
+            title=f"Important Notice — Flight {fn} Cancelled",
+            color=STATUS_COLORS["Cancelled"],
+            description=(
+                f"Dear passenger,\n\n"
+                f"We regret to inform you that flight **{fn}** ({route}) "
+                f"on **{f['date']}** has been cancelled"
+                + (f" due to {f['reason'].lower()}." if f.get("reason") else ".")
+                + f"\n\n"
+                f"We sincerely apologise for any inconvenience this may cause. "
+                f"If you have purchased any products or services in connection with this flight, "
+                f"please contact our customer service team who will be happy to assist you.\n\n"
+                f"Thank you for your understanding, and we look forward to welcoming you on board a future Icelandair service."
+            ),
+        )
+    elif event == "delayed":
+        embed = discord.Embed(
+            title=f"Flight Update — {fn} Delayed",
+            color=STATUS_COLORS["Delayed"],
+            description=(
+                f"Your flight **{fn}** ({route}) on **{f['date']}** has been delayed.\n\n"
+                + (f"**Reason:** {f['reason']}\n" if f.get("reason") else "")
+                + f"**New estimated departure:** {fmt_time(f.get('etd'))}\n\n"
+                f"We apologise for the inconvenience and thank you for your patience."
+            ),
+        )
+    elif event == "checkin":
+        embed = discord.Embed(
+            title=f"Check-in Open — {fn}",
+            color=STATUS_COLORS["Boarding"],
+            description=(
+                f"Check-in is now open for your flight **{fn}** ({route}) on **{f['date']}**.\n\n"
+                f"**Scheduled departure:** {fmt_time(f.get('std'))}\n\n"
+                f"We look forward to welcoming you on board."
+            ),
+        )
+    elif event == "boarding":
+        embed = discord.Embed(
+            title=f"Boarding Now — {fn}",
+            color=STATUS_COLORS["Boarding"],
+            description=(
+                f"Your flight **{fn}** ({route}) is now boarding.\n\n"
+                f"Please make your way to the gate. We look forward to welcoming you on board."
+            ),
+        )
+    elif event == "departed":
+        embed = discord.Embed(
+            title=f"Flight Departed — {fn}",
+            color=STATUS_COLORS["Departed"],
+            description=(
+                f"Your flight **{fn}** ({route}) has departed.\n\n"
+                f"**ATD:** {fmt_time(f.get('atd'))} · **ETA:** {fmt_time(f.get('eta') or f.get('sta'))}\n\n"
+                f"We hope you enjoy your flight."
+            ),
+        )
+    elif event == "arrived":
+        embed = discord.Embed(
+            title=f"Flight Arrived — {fn}",
+            color=STATUS_COLORS["Arrived"],
+            description=(
+                f"Your flight **{fn}** ({route}) has arrived.\n\n"
+                f"**ATA:** {fmt_time(f.get('ata'))}\n\n"
+                f"Thank you for flying with Icelandair. We hope to see you again soon."
+            ),
+        )
+    else:
+        embed = discord.Embed(
+            title=f"Flight Update — {fn}",
+            color=color,
+            description=f"There has been an update to your flight **{fn}** ({route}) on **{f['date']}**.",
+        )
+
+    embed.set_thumbnail(url="https://www.icelandair.com/favicon.ico")
+    embed.set_footer(text="Icelandair Saga Club — Flight Notifications", icon_url="https://www.icelandair.com/favicon.ico")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
@@ -149,12 +237,7 @@ def build_flight_embed(f: dict) -> discord.Embed:
 # ── Reason select menus ───────────────────────────────────────────────────────
 
 class CustomReasonModal(discord.ui.Modal, title="Enter Custom Reason"):
-    reason = discord.ui.TextInput(
-        label="Reason",
-        placeholder="Enter the reason...",
-        max_length=200,
-        style=discord.TextStyle.short,
-    )
+    reason = discord.ui.TextInput(label="Reason", placeholder="Enter the reason...", max_length=200, style=discord.TextStyle.short)
 
     def __init__(self, flight_number: str, action: str, etd: str = None, cog=None):
         super().__init__()
@@ -164,10 +247,7 @@ class CustomReasonModal(discord.ui.Modal, title="Enter Custom Reason"):
         self.cog           = cog
 
     async def on_submit(self, interaction: discord.Interaction):
-        await self.cog.apply_reason_action(
-            interaction, self.flight_number, self.action,
-            str(self.reason), self.etd
-        )
+        await self.cog.apply_reason_action(interaction, self.flight_number, self.action, str(self.reason), self.etd)
 
 
 class ReasonSelectMenu(discord.ui.Select):
@@ -176,30 +256,15 @@ class ReasonSelectMenu(discord.ui.Select):
         self.action        = action
         self.etd           = etd
         self.cog           = cog
-
-        options = [
-            discord.SelectOption(label=r, value=r)
-            for r in REASON_TEMPLATES
-        ]
-        super().__init__(
-            placeholder="Select a reason...",
-            options=options,
-            min_values=1,
-            max_values=1,
-        )
+        options = [discord.SelectOption(label=r, value=r) for r in REASON_TEMPLATES]
+        super().__init__(placeholder="Select a reason...", options=options, min_values=1, max_values=1)
 
     async def callback(self, interaction: discord.Interaction):
         selected = self.values[0]
         if selected == "Custom reason":
-            modal = CustomReasonModal(
-                self.flight_number, self.action, self.etd, self.cog
-            )
-            await interaction.response.send_modal(modal)
+            await interaction.response.send_modal(CustomReasonModal(self.flight_number, self.action, self.etd, self.cog))
         else:
-            await self.cog.apply_reason_action(
-                interaction, self.flight_number, self.action,
-                selected, self.etd
-            )
+            await self.cog.apply_reason_action(interaction, self.flight_number, self.action, selected, self.etd)
 
 
 class ReasonSelectView(discord.ui.View):
@@ -208,7 +273,84 @@ class ReasonSelectView(discord.ui.View):
         self.add_item(ReasonSelectMenu(flight_number, action, etd, cog))
 
 
+# ── Flight creation modal ─────────────────────────────────────────────────────
+
+class FlightCreateModal(discord.ui.Modal, title="Create New Flight"):
+    flight_number = discord.ui.TextInput(label="Flight Number",       placeholder="e.g. FI123",           max_length=10)
+    origin        = discord.ui.TextInput(label="Origin (IATA)",       placeholder="e.g. KEF",             max_length=3)
+    destination   = discord.ui.TextInput(label="Destination (IATA)",  placeholder="e.g. LHR",             max_length=3)
+    date          = discord.ui.TextInput(label="Date",                 placeholder="e.g. 23 Apr 2025",     max_length=20)
+    aircraft_type = discord.ui.TextInput(label="Aircraft Type",        placeholder="e.g. Boeing 757-200",  max_length=50)
+
+    def __init__(self, registration: str, std: str, sta: str, block_time: str, economy_count: int, premium_count: int, cog=None):
+        super().__init__()
+        self.reg           = registration
+        self.std           = std
+        self.sta           = sta
+        self.block_time    = block_time
+        self.economy_count = economy_count
+        self.premium_count = premium_count
+        self.cog           = cog
+
+    async def on_submit(self, interaction: discord.Interaction):
+        existing = await get_flight(str(self.flight_number))
+        if existing:
+            await interaction.response.send_message(f"Flight `{str(self.flight_number).upper()}` already exists. Use `/flight-update` to modify it.", ephemeral=True)
+            return
+
+        doc = await create_flight({
+            "flight_number": str(self.flight_number),
+            "origin":        str(self.origin),
+            "destination":   str(self.destination),
+            "date":          str(self.date),
+            "aircraft_type": str(self.aircraft_type),
+            "registration":  self.reg,
+            "std":           self.std,
+            "sta":           self.sta,
+            "block_time":    self.block_time,
+            "economy_count": self.economy_count,
+            "premium_count": self.premium_count,
+        })
+
+        await self.cog.refresh_board()
+        await self.cog.post_announcement(doc, "scheduled")
+
+        embed = discord.Embed(
+            title="Flight Created", color=0x003B6F,
+            description=(
+                f"**{doc['flight_number']}** {str(self.origin).upper()} → {str(self.destination).upper()} added to the board.\n"
+                f"**Date:** {str(self.date)} · **STD:** {self.std} · **STA:** {self.sta}"
+            )
+        )
+        embed.set_footer(text="Icelandair Operations", icon_url="https://www.icelandair.com/favicon.ico")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 # ── Flight board views ────────────────────────────────────────────────────────
+
+class SubscribeButton(discord.ui.Button):
+    def __init__(self, flight_number: str):
+        super().__init__(label="🔔 Subscribe to Updates", style=discord.ButtonStyle.success)
+        self.flight_number = flight_number
+
+    async def callback(self, interaction: discord.Interaction):
+        newly = await subscribe(interaction.user.id, self.flight_number)
+        if newly:
+            embed = discord.Embed(
+                title="🔔 Subscribed",
+                description=(
+                    f"You are now subscribed to updates for flight **{self.flight_number}**.\n\n"
+                    f"You will receive a direct message whenever this flight is delayed, cancelled, "
+                    f"starts boarding, departs, arrives, or check-in opens.\n\n"
+                    f"You can unsubscribe at any time using `/flight-unsubscribe`."
+                ),
+                color=STATUS_COLORS["Boarding"],
+            )
+            embed.set_footer(text="Icelandair Operations", icon_url="https://www.icelandair.com/favicon.ico")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(f"You are already subscribed to updates for flight **{self.flight_number}**.", ephemeral=True)
+
 
 class FlightSelectMenu(discord.ui.Select):
     def __init__(self, active_flights: list):
@@ -223,12 +365,7 @@ class FlightSelectMenu(discord.ui.Select):
         ]
         if not options:
             options = [discord.SelectOption(label="No active flights", value="none", emoji="❌")]
-        super().__init__(
-            placeholder="Select a flight to view...",
-            options=options,
-            min_values=1,
-            max_values=1,
-        )
+        super().__init__(placeholder="Select a flight to view...", options=options, min_values=1, max_values=1)
 
     async def callback(self, interaction: discord.Interaction):
         if self.values[0] == "none":
@@ -240,7 +377,7 @@ class FlightSelectMenu(discord.ui.Select):
             return
         embed = build_flight_embed(flight)
         view  = FlightDetailView(flight)
-        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 class FlightBoardView(discord.ui.View):
@@ -253,13 +390,14 @@ class FlightDetailView(discord.ui.View):
     def __init__(self, flight: dict):
         super().__init__(timeout=None)
         self.flight = flight
+        self.add_item(SubscribeButton(flight["flight_number"]))
 
     @discord.ui.button(label="← Main Menu", style=discord.ButtonStyle.secondary)
     async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         active_flights = await get_active_flights()
         embed = build_main_board_embed(active_flights)
         view  = FlightBoardView(active_flights)
-        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.response.edit_message(embed=embed, view=view, ephemeral=True)
 
 
 # ── Cog ───────────────────────────────────────────────────────────────────────
@@ -277,7 +415,7 @@ class FlightsCog(commands.Cog):
     async def purge_loop(self):
         count = await purge_old_flights()
         if count:
-            print(f"[Flights] Purged {count} old flight(s) from the board")
+            print(f"[Flights] Purged {count} old flight(s)")
             await self.refresh_board()
 
     @purge_loop.before_loop
@@ -293,7 +431,6 @@ class FlightsCog(commands.Cog):
         channel = await self.get_board_channel()
         if not channel:
             return
-
         active_flights = await get_active_flights()
         embed          = build_main_board_embed(active_flights)
         view           = FlightBoardView(active_flights)
@@ -314,39 +451,47 @@ class FlightsCog(commands.Cog):
 
         self.board_message = await channel.send(embed=embed, view=view)
 
-    async def apply_reason_action(
-        self, interaction: discord.Interaction,
-        flight_number: str, action: str,
-        reason: str, etd: str = None
-    ):
-        """Shared handler for both cancel and delay after reason is selected."""
-        updates = {"reason": reason}
+    async def post_announcement(self, flight: dict, event: str):
+        """Posts a public announcement in the board channel for a flight event."""
+        channel = await self.get_board_channel()
+        if not channel:
+            return
+        embed = build_announcement_embed(flight, event)
+        await channel.send(embed=embed)
 
+    async def notify_subscribers(self, flight: dict, event: str):
+        """Sends personalised DMs to all subscribers of a flight."""
+        subscribers = await get_subscribers(flight["flight_number"])
+        for discord_id in subscribers:
+            try:
+                user  = await self.bot.fetch_user(discord_id)
+                embed = build_subscriber_dm(flight, event, discord_id)
+                await user.send(embed=embed)
+            except Exception as e:
+                print(f"[Flights] Could not DM subscriber {discord_id}: {e}")
+
+        if event in ("cancelled", "arrived"):
+            await clear_subscriptions(flight["flight_number"])
+
+    async def apply_reason_action(self, interaction: discord.Interaction, flight_number: str, action: str, reason: str, etd: str = None):
+        updates = {"reason": reason}
         if action == "cancel":
             updates["status"] = "Cancelled"
-            confirm_msg = (
-                f"Flight `{flight_number}` has been **cancelled**.\n"
-                f"**Reason:** {reason}\n"
-                f"It will be removed from the board in 24 hours."
-            )
-        else:  # delay
+            event = "cancelled"
+            confirm_msg = f"Flight `{flight_number}` has been **cancelled**.\n**Reason:** {reason}\nIt will be removed from the board in 24 hours."
+        else:
             updates["status"] = "Delayed"
             if etd:
                 updates["etd"] = etd
-            confirm_msg = (
-                f"Flight `{flight_number}` has been marked as **delayed**.\n"
-                f"**Reason:** {reason}"
-                + (f"\n**New ETD:** {etd}" if etd else "")
-            )
+            event = "delayed"
+            confirm_msg = f"Flight `{flight_number}` has been marked as **delayed**.\n**Reason:** {reason}" + (f"\n**New ETD:** {etd}" if etd else "")
 
-        await update_flight(flight_number, updates)
+        updated = await update_flight(flight_number, updates)
         await self.refresh_board()
+        await self.post_announcement(updated, event)
+        await self.notify_subscribers(updated, event)
 
-        embed = discord.Embed(
-            title="Flight Updated",
-            color=STATUS_COLORS.get(updates["status"], 0x003B6F),
-            description=confirm_msg,
-        )
+        embed = discord.Embed(title="Flight Updated", color=STATUS_COLORS.get(updates["status"], 0x003B6F), description=confirm_msg)
         embed.set_footer(text="Icelandair Operations", icon_url="https://www.icelandair.com/favicon.ico")
 
         if interaction.response.is_done():
@@ -357,43 +502,12 @@ class FlightsCog(commands.Cog):
     # ── /flight-create ────────────────────────────────────────────────────────
     @app_commands.command(name="flight-create", description="[Dispatcher] Create a new flight on the board")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def flight_create(
-        self, interaction: discord.Interaction,
-        flight_number: str, origin: str, destination: str,
-        date: str, aircraft_type: str, registration: str,
-        std: str, sta: str, block_time: str,
-        economy_count: int = 0, premium_count: int = 0,
-        etd: str = None, eta: str = None,
-    ):
-        await interaction.response.defer(ephemeral=True)
+    async def flight_create(self, interaction: discord.Interaction, registration: str, std: str, sta: str, block_time: str, economy_count: int = 0, premium_count: int = 0):
         if not is_dispatcher(interaction):
-            await interaction.followup.send("You don't have permission to use this command.", ephemeral=True)
+            await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
             return
-
-        existing = await get_flight(flight_number)
-        if existing:
-            await interaction.followup.send(f"Flight `{flight_number.upper()}` already exists. Use `/flight-update` to modify it.", ephemeral=True)
-            return
-
-        doc = await create_flight({
-            "flight_number": flight_number, "origin": origin,
-            "destination": destination, "date": date,
-            "aircraft_type": aircraft_type, "registration": registration,
-            "std": std, "sta": sta, "etd": etd, "eta": eta,
-            "block_time": block_time, "economy_count": economy_count,
-            "premium_count": premium_count,
-        })
-        await self.refresh_board()
-
-        embed = discord.Embed(
-            title="Flight Created", color=0x003B6F,
-            description=(
-                f"**{doc['flight_number']}** {doc['origin']} → {doc['destination']} added to the board.\n"
-                f"**Date:** {doc['date']} · **STD:** {std} · **STA:** {sta}"
-            )
-        )
-        embed.set_footer(text="Icelandair Operations", icon_url="https://www.icelandair.com/favicon.ico")
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        modal = FlightCreateModal(registration=registration, std=std, sta=sta, block_time=block_time, economy_count=economy_count, premium_count=premium_count, cog=self)
+        await interaction.response.send_modal(modal)
 
     # ── /flight-update ────────────────────────────────────────────────────────
     @app_commands.command(name="flight-update", description="[Dispatcher] Update a flight's details or status")
@@ -401,11 +515,9 @@ class FlightsCog(commands.Cog):
     async def flight_update(
         self, interaction: discord.Interaction,
         flight_number: str, status: str = None,
-        etd: str = None, eta: str = None,
-        atd: str = None, ata: str = None,
+        etd: str = None, eta: str = None, atd: str = None, ata: str = None,
         economy_count: int = None, premium_count: int = None,
-        checkin_open: bool = None, block_time: str = None,
-        registration: str = None,
+        checkin_open: bool = None, block_time: str = None, registration: str = None,
     ):
         await interaction.response.defer(ephemeral=True)
         if not is_dispatcher(interaction):
@@ -422,16 +534,16 @@ class FlightsCog(commands.Cog):
             return
 
         updates = {}
-        if status:                        updates["status"]         = status
-        if etd:                           updates["etd"]            = etd
-        if eta:                           updates["eta"]            = eta
-        if atd:                           updates["atd"]            = atd
-        if ata:                           updates["ata"]            = ata
-        if block_time:                    updates["block_time"]     = block_time
-        if registration:                  updates["registration"]   = registration
-        if economy_count is not None:     updates["economy_count"]  = economy_count
-        if premium_count is not None:     updates["premium_count"]  = premium_count
-        if checkin_open is not None:      updates["checkin_open"]   = checkin_open
+        if status:                    updates["status"]        = status
+        if etd:                       updates["etd"]           = etd
+        if eta:                       updates["eta"]           = eta
+        if atd:                       updates["atd"]           = atd
+        if ata:                       updates["ata"]           = ata
+        if block_time:                updates["block_time"]    = block_time
+        if registration:              updates["registration"]  = registration
+        if economy_count is not None: updates["economy_count"] = economy_count
+        if premium_count is not None: updates["premium_count"] = premium_count
+        if checkin_open is not None:  updates["checkin_open"]  = checkin_open
 
         if not updates:
             await interaction.followup.send("No updates provided.", ephemeral=True)
@@ -439,6 +551,17 @@ class FlightsCog(commands.Cog):
 
         updated = await update_flight(flight_number, updates)
         await self.refresh_board()
+
+        # Determine event type for announcement and subscriber DMs
+        event = "update"
+        if status == "Boarding":      event = "boarding"
+        elif status == "Departed":    event = "departed"
+        elif status == "Arrived":     event = "arrived"
+        elif checkin_open is True:    event = "checkin"
+
+        if event != "update" or checkin_open is True:
+            await self.post_announcement(updated, event)
+            await self.notify_subscribers(updated, event)
 
         embed = discord.Embed(
             title="Flight Updated",
@@ -452,10 +575,7 @@ class FlightsCog(commands.Cog):
 
     @flight_update.autocomplete("status")
     async def status_autocomplete(self, interaction: discord.Interaction, current: str):
-        return [
-            app_commands.Choice(name=s, value=s)
-            for s in STATUSES if current.lower() in s.lower()
-        ]
+        return [app_commands.Choice(name=s, value=s) for s in STATUSES if current.lower() in s.lower()]
 
     # ── /flight-cancel ────────────────────────────────────────────────────────
     @app_commands.command(name="flight-cancel", description="[Dispatcher] Cancel a flight with a reason")
@@ -465,48 +585,38 @@ class FlightsCog(commands.Cog):
         if not is_dispatcher(interaction):
             await interaction.followup.send("You don't have permission to use this command.", ephemeral=True)
             return
-
         flight = await get_flight(flight_number)
         if not flight:
             await interaction.followup.send(f"Flight `{flight_number.upper()}` not found.", ephemeral=True)
             return
-
-        embed = discord.Embed(
-            title=f"Cancel {flight_number.upper()}",
-            description="Select a cancellation reason from the dropdown below.",
-            color=STATUS_COLORS["Cancelled"],
-        )
+        embed = discord.Embed(title=f"Cancel {flight_number.upper()}", description="Select a cancellation reason from the dropdown below.", color=STATUS_COLORS["Cancelled"])
         embed.set_footer(text="Icelandair Operations", icon_url="https://www.icelandair.com/favicon.ico")
-        view = ReasonSelectView(flight_number.upper(), "cancel", cog=self)
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        await interaction.followup.send(embed=embed, view=ReasonSelectView(flight_number.upper(), "cancel", cog=self), ephemeral=True)
 
     # ── /flight-delay ─────────────────────────────────────────────────────────
     @app_commands.command(name="flight-delay", description="[Dispatcher] Delay a flight with a reason and new ETD")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def flight_delay(
-        self, interaction: discord.Interaction,
-        flight_number: str,
-        new_etd: str = None,
-    ):
+    async def flight_delay(self, interaction: discord.Interaction, flight_number: str, new_etd: str = None):
         await interaction.response.defer(ephemeral=True)
         if not is_dispatcher(interaction):
             await interaction.followup.send("You don't have permission to use this command.", ephemeral=True)
             return
-
         flight = await get_flight(flight_number)
         if not flight:
             await interaction.followup.send(f"Flight `{flight_number.upper()}` not found.", ephemeral=True)
             return
-
         etd_str = f" · New ETD: **{new_etd}**" if new_etd else ""
-        embed = discord.Embed(
-            title=f"Delay {flight_number.upper()}",
-            description=f"Select a delay reason from the dropdown below.{etd_str}",
-            color=STATUS_COLORS["Delayed"],
-        )
+        embed = discord.Embed(title=f"Delay {flight_number.upper()}", description=f"Select a delay reason from the dropdown below.{etd_str}", color=STATUS_COLORS["Delayed"])
         embed.set_footer(text="Icelandair Operations", icon_url="https://www.icelandair.com/favicon.ico")
-        view = ReasonSelectView(flight_number.upper(), "delay", etd=new_etd, cog=self)
-        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        await interaction.followup.send(embed=embed, view=ReasonSelectView(flight_number.upper(), "delay", etd=new_etd, cog=self), ephemeral=True)
+
+    # ── /flight-unsubscribe ───────────────────────────────────────────────────
+    @app_commands.command(name="flight-unsubscribe", description="Unsubscribe from updates for a specific flight")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    async def flight_unsubscribe(self, interaction: discord.Interaction, flight_number: str):
+        await interaction.response.defer(ephemeral=True)
+        await unsubscribe(interaction.user.id, flight_number.upper())
+        await interaction.followup.send(f"You have been unsubscribed from updates for flight **{flight_number.upper()}**.", ephemeral=True)
 
     # ── /flight-board ─────────────────────────────────────────────────────────
     @app_commands.command(name="flight-board", description="Post or refresh the flight board in the board channel")
