@@ -14,6 +14,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 COGS = [
     "cogs.saga",
     "cogs.bloxlink",
+    "cogs.flights",
 ]
 
 @bot.event
