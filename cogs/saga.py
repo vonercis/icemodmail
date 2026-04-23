@@ -1,11 +1,12 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from database import (
-    get_member, create_member, add_points, set_points,
-    log_flight, TIER_THRESHOLDS, EARNING_MULTIPLIERS
+    get_member, create_member, add_points, set_points, log_flight,
+    set_upgrades, use_upgrade, add_note, delete_note,
+    get_member_by_username, TIER_THRESHOLDS, EARNING_MULTIPLIERS, members as members_col
 )
 from bloxlink import get_roblox_user
 from dotenv import load_dotenv
@@ -13,7 +14,8 @@ import math
 
 load_dotenv()
 
-GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))
+GUILD_ID      = int(os.getenv("DISCORD_GUILD_ID"))
+STAFF_ROLE_ID = int(os.getenv("STAFF_ROLE_ID", 0))
 
 TIER_COLORS = {
     "blue":   0x003B6F,
@@ -33,6 +35,31 @@ TIER_NEXT = {
     "gold":   (None,     None),
 }
 
+TIER_CONGRATS = {
+    "silver": (
+        "🎉 **Congratulations — you've reached Saga Silver!**\n\n"
+        "As a Saga Silver member you now have access to:\n"
+        "<:lbcheckin:1374689021472669738> Priority check-in\n"
+        "<:lblounge:1374689001151135877> Lounge access\n"
+        "<:lbcarryon:1374689023389597797> Extra baggage allowance\n"
+        "<:lbwalking:1374689019593756842> Priority boarding\n"
+        "1× complimentary upgrade per month\n\n"
+        "Thank you for flying with Icelandair. We look forward to welcoming you on board."
+    ),
+    "gold": (
+        "🏆 **Congratulations — you've reached Saga Gold!**\n\n"
+        "As a Saga Gold member — our highest tier — you now have access to:\n"
+        "<:lbcheckin:1374689021472669738> Priority check-in\n"
+        "<:lblounge:1374689001151135877> Lounge access\n"
+        "<:lbcarryon:1374689023389597797> Extra baggage allowance\n"
+        "<:lbwalking:1374689019593756842> Priority boarding\n"
+        "<:lbwifi:1374689006289424425> Complimentary Wi-Fi\n"
+        "<:lbstarcard:1374688997132996681> Companion card\n"
+        "Unlimited complimentary upgrades\n\n"
+        "Thank you for your loyalty to Icelandair. We're honoured to have you as a Gold member."
+    ),
+}
+
 FARE_CLASS_LABELS = {
     "economy_standard": "Economy Standard",
     "economy_flex":     "Economy Flex",
@@ -41,15 +68,22 @@ FARE_CLASS_LABELS = {
 }
 
 FLIGHTS_PER_PAGE = 5
+NOTES_PER_PAGE   = 5
+
+
+def is_staff(interaction: discord.Interaction) -> bool:
+    if not STAFF_ROLE_ID:
+        return interaction.user.guild_permissions.manage_roles
+    return any(r.id == STAFF_ROLE_ID for r in interaction.user.roles)
 
 
 def build_progress_bar(current: int, target: int, length: int = 10) -> str:
     if target is None:
         return "▓" * length + " Max Tier"
-    ratio    = min(current / target, 1.0)
-    filled   = math.floor(ratio * length)
-    empty    = length - filled
-    percent  = int(ratio * 100)
+    ratio   = min(current / target, 1.0)
+    filled  = math.floor(ratio * length)
+    empty   = length - filled
+    percent = int(ratio * 100)
     return f"{'▓' * filled}{'░' * empty} {percent}%"
 
 
@@ -61,14 +95,14 @@ def build_profile_embed(doc: dict) -> discord.Embed:
     last_flight = doc.get("last_flight")
     expiry      = doc.get("points_expiry")
     since       = doc.get("member_since")
+    upgrades    = doc.get("complimentary_upgrades", 0)
 
     next_tier, next_threshold = TIER_NEXT[tier]
     if next_threshold:
-        tc_display    = f"{tc:,} TC\n{build_progress_bar(tc, next_threshold)} to {next_tier.title()}\n{next_threshold:,} TC required"
+        tc_display = f"{tc:,} TC\n{build_progress_bar(tc, next_threshold)} to {next_tier.title()}\n{next_threshold:,} TC required"
     else:
-        tc_display    = f"{tc:,} TC\n{build_progress_bar(tc, None)}"
+        tc_display = f"{tc:,} TC\n{build_progress_bar(tc, None)}"
 
-    last_flight_str = "No flights yet"
     if last_flight:
         last_flight_str = f"{flights:,} flights\n*Last: {last_flight['origin']} → {last_flight['destination']}*"
     else:
@@ -84,24 +118,25 @@ def build_profile_embed(doc: dict) -> discord.Embed:
     )
     embed.set_thumbnail(url="https://www.icelandair.com/favicon.ico")
 
-    embed.add_field(name="<:dbpersonbg:1374617772855660637> Member Name",  value=doc.get("roblox_username", "Unknown"), inline=True)
-    embed.add_field(name="<:dbsagacard:1374617767097008148> Saga Club No.", value=f"`{doc.get('saga_number', 'N/A')}`",   inline=True)
-    embed.add_field(name="<:dbcalenderbg:1374617779067551786> Member Since", value=since_str,                              inline=True)
-    embed.add_field(name="Membership Tier",                                  value=TIER_LABELS[tier],                      inline=True)
-    embed.add_field(name="\u200b",                                           value="\u200b",                               inline=True)
-    embed.add_field(name="\u200b",                                           value="\u200b",                               inline=True)
-    embed.add_field(name="<:dbtakeoffbg:1374617776504832001> Tier Credits", value=tc_display,                             inline=False)
-    embed.add_field(name="<:dbstarcard:1374694940856025128> Saga Points",   value=f"{points:,} pts\n*Expires {expiry_str}*", inline=True)
-    embed.add_field(name="<:dbtakeoffbg:1374617776504832001> Flights Completed", value=last_flight_str,                   inline=True)
+    embed.add_field(name="<:dbpersonbg:1374617772855660637> Member Name",       value=doc.get("roblox_username", "Unknown"), inline=True)
+    embed.add_field(name="<:dbsagacard:1374617767097008148> Saga Club No.",      value=f"`{doc.get('saga_number', 'N/A')}`",  inline=True)
+    embed.add_field(name="<:dbcalenderbg:1374617779067551786> Member Since",     value=since_str,                             inline=True)
+    embed.add_field(name="Membership Tier",                                       value=TIER_LABELS[tier],                     inline=True)
+    embed.add_field(name="\u200b",                                                value="\u200b",                              inline=True)
+    embed.add_field(name="\u200b",                                                value="\u200b",                              inline=True)
+    embed.add_field(name="<:dbtakeoffbg:1374617776504832001> Tier Credits",      value=tc_display,                            inline=False)
+    embed.add_field(name="<:dbstarcard:1374694940856025128> Saga Points",        value=f"{points:,} pts\n*Expires {expiry_str}*", inline=True)
+    embed.add_field(name="<:dbtakeoffbg:1374617776504832001> Flights Completed", value=last_flight_str,                       inline=True)
 
     if tier in ("silver", "gold"):
+        upgrade_str = "Unlimited" if tier == "gold" else f"{upgrades} remaining this month"
         benefits = {
             "silver": (
                 "<:lbcheckin:1374689021472669738> Priority check-in\n"
                 "<:lblounge:1374689001151135877> Lounge access\n"
                 "<:lbcarryon:1374689023389597797> Extra baggage\n"
                 "<:lbwalking:1374689019593756842> Priority boarding\n"
-                "1x complimentary upgrade"
+                f"✈ Complimentary upgrades: {upgrade_str}"
             ),
             "gold": (
                 "<:lbcheckin:1374689021472669738> Priority check-in\n"
@@ -110,7 +145,7 @@ def build_profile_embed(doc: dict) -> discord.Embed:
                 "<:lbwalking:1374689019593756842> Priority boarding\n"
                 "<:lbwifi:1374689006289424425> Complimentary Wi-Fi\n"
                 "<:lbstarcard:1374688997132996681> Companion card\n"
-                "Unlimited complimentary upgrades"
+                f"✈ Complimentary upgrades: {upgrade_str}"
             ),
         }
         embed.add_field(
@@ -128,11 +163,11 @@ def build_profile_embed(doc: dict) -> discord.Embed:
 
 
 def build_history_embed(doc: dict, page: int) -> tuple[discord.Embed, int]:
-    history      = list(reversed(doc.get("flight_history", [])))
-    total_pages  = max(1, math.ceil(len(history) / FLIGHTS_PER_PAGE))
-    page         = max(1, min(page, total_pages))
-    start        = (page - 1) * FLIGHTS_PER_PAGE
-    slice_       = history[start:start + FLIGHTS_PER_PAGE]
+    history     = list(reversed(doc.get("flight_history", [])))
+    total_pages = max(1, math.ceil(len(history) / FLIGHTS_PER_PAGE))
+    page        = max(1, min(page, total_pages))
+    start       = (page - 1) * FLIGHTS_PER_PAGE
+    slice_      = history[start:start + FLIGHTS_PER_PAGE]
 
     tier  = doc.get("tier", "blue")
     embed = discord.Embed(
@@ -146,8 +181,8 @@ def build_history_embed(doc: dict, page: int) -> tuple[discord.Embed, int]:
         embed.add_field(name="No flights yet", value="Complete a flight to see your history here.", inline=False)
     else:
         for f in slice_:
-            date_str     = f["date"].strftime("%-d %b %Y") if f.get("date") else "N/A"
-            fare_label   = FARE_CLASS_LABELS.get(f.get("fare_class", ""), f.get("fare_class", "N/A"))
+            date_str   = f["date"].strftime("%-d %b %Y") if f.get("date") else "N/A"
+            fare_label = FARE_CLASS_LABELS.get(f.get("fare_class", ""), f.get("fare_class", "N/A"))
             embed.add_field(
                 name=f"<:dbtakeoffbg:1374617776504832001> {f['origin']} → {f['destination']}",
                 value=(
@@ -165,6 +200,57 @@ def build_history_embed(doc: dict, page: int) -> tuple[discord.Embed, int]:
     )
     embed.timestamp = datetime.now(timezone.utc)
     return embed, total_pages
+
+
+def build_notes_embed(doc: dict, page: int) -> tuple[discord.Embed, int]:
+    notes       = doc.get("internal_notes", [])
+    total_pages = max(1, math.ceil(len(notes) / NOTES_PER_PAGE))
+    page        = max(1, min(page, total_pages))
+    start       = (page - 1) * NOTES_PER_PAGE
+    slice_      = notes[start:start + NOTES_PER_PAGE]
+
+    embed = discord.Embed(
+        title=f"Internal Notes — {doc.get('roblox_username', 'Unknown')}",
+        description=f"Page {page} of {total_pages}",
+        color=0x444441,
+    )
+
+    if not slice_:
+        embed.add_field(name="No notes", value="No internal notes have been added yet.", inline=False)
+    else:
+        for i, note in enumerate(slice_):
+            created = note.get("created_at")
+            date_str = created.strftime("%-d %b %Y %H:%M") if created else "N/A"
+            embed.add_field(
+                name=f"Note #{start + i + 1} — {note.get('staff', 'Unknown')} • {date_str}",
+                value=note.get("text", ""),
+                inline=False
+            )
+
+    embed.set_footer(text="Icelandair Saga Club — Internal Use Only")
+    embed.timestamp = datetime.now(timezone.utc)
+    return embed, total_pages
+
+
+async def send_tier_congrats(bot: commands.Bot, discord_id: int, new_tier: str):
+    if new_tier not in TIER_CONGRATS:
+        return
+    try:
+        user = await bot.fetch_user(discord_id)
+        embed = discord.Embed(
+            title="Icelandair Saga Club",
+            description=TIER_CONGRATS[new_tier],
+            color=TIER_COLORS[new_tier],
+        )
+        embed.set_thumbnail(url="https://www.icelandair.com/favicon.ico")
+        embed.set_footer(
+            text="Icelandair Saga Club",
+            icon_url="https://www.icelandair.com/favicon.ico"
+        )
+        embed.timestamp = datetime.now(timezone.utc)
+        await user.send(embed=embed)
+    except Exception as e:
+        print(f"[Saga] Could not DM tier congrats to {discord_id}: {e}")
 
 
 class FlightHistoryView(discord.ui.View):
@@ -194,27 +280,81 @@ class FlightHistoryView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=self)
 
 
+class NotesView(discord.ui.View):
+    def __init__(self, doc: dict, page: int = 1):
+        super().__init__(timeout=120)
+        self.doc  = doc
+        self.page = page
+        self._update_buttons()
+
+    def _update_buttons(self):
+        _, total_pages = build_notes_embed(self.doc, self.page)
+        self.prev_button.disabled = self.page <= 1
+        self.next_button.disabled = self.page >= total_pages
+
+    @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.secondary)
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page -= 1
+        self._update_buttons()
+        embed, _ = build_notes_embed(self.doc, self.page)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page += 1
+        self._update_buttons()
+        embed, _ = build_notes_embed(self.doc, self.page)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+
 class ProfileView(discord.ui.View):
-    def __init__(self, doc: dict):
+    def __init__(self, doc: dict, show_notes_button: bool = False):
         super().__init__(timeout=120)
         self.doc = doc
+        if not show_notes_button:
+            self.remove_item(self.notes_button)
 
-    @discord.ui.button(label="✈ View Flight History", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="✈ Flight History", style=discord.ButtonStyle.primary)
     async def history_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed, _ = build_history_embed(self.doc, page=1)
         view     = FlightHistoryView(self.doc, page=1)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="🔒 Internal Notes", style=discord.ButtonStyle.danger)
+    async def notes_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_staff(interaction):
+            await interaction.response.send_message("You don't have permission to view internal notes.", ephemeral=True)
+            return
+        embed, _ = build_notes_embed(self.doc, page=1)
+        view     = NotesView(self.doc, page=1)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 class SagaCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.monthly_upgrade_reset.start()
+
+    def cog_unload(self):
+        self.monthly_upgrade_reset.cancel()
+
+    @tasks.loop(hours=24)
+    async def monthly_upgrade_reset(self):
+        """Resets Silver members' complimentary upgrades to 1 on the 1st of each month."""
+        now = datetime.now(timezone.utc)
+        if now.day != 1:
+            return
+        await members_col.update_many(
+            {"tier": "silver"},
+            {"$set": {"complimentary_upgrades": 1, "upgrade_last_reset": now}}
+        )
+        print(f"[Saga] Monthly upgrade reset complete for Silver members")
+
+    @monthly_upgrade_reset.before_loop
+    async def before_reset(self):
+        await self.bot.wait_until_ready()
 
     async def get_verified_member(self, interaction: discord.Interaction) -> dict | None:
-        """
-        Checks Bloxlink verification. If not verified, sends an error and returns None.
-        If verified but not in DB, creates a new profile and returns the doc.
-        """
         roblox = await get_roblox_user(interaction.user.id)
         if not roblox:
             embed = discord.Embed(
@@ -226,7 +366,10 @@ class SagaCog(commands.Cog):
                 color=0xE24B4A,
             )
             embed.set_footer(text="Icelandair Saga Club", icon_url="https://www.icelandair.com/favicon.ico")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            if interaction.response.is_done():
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.response.send_message(embed=embed, ephemeral=True)
             return None
 
         doc = await get_member(interaction.user.id)
@@ -235,40 +378,62 @@ class SagaCog(commands.Cog):
             bloxlink_cog = self.bot.cogs.get("BloxlinkCog")
             if bloxlink_cog:
                 await bloxlink_cog.update_member_tier(interaction.user.id, doc["tier"])
-
         return doc
 
+    async def handle_tier_change(self, discord_id: int, old_tier: str, new_tier: str):
+        """Handles role update and DM congratulations on tier change."""
+        if old_tier == new_tier:
+            return
+        bloxlink_cog = self.bot.cogs.get("BloxlinkCog")
+        if bloxlink_cog:
+            await bloxlink_cog.update_member_tier(discord_id, new_tier)
+        if new_tier in ("silver", "gold") and (
+            new_tier == "gold" or old_tier == "blue"
+        ):
+            await send_tier_congrats(self.bot, discord_id, new_tier)
+
+    # ── /saga-profile ────────────────────────────────────────────────────────
     @app_commands.command(name="saga-profile", description="View your Icelandair Saga Club profile")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     async def saga_profile(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         doc = await self.get_verified_member(interaction)
         if not doc:
             return
         embed = build_profile_embed(doc)
-        view  = ProfileView(doc)
+        view  = ProfileView(doc, show_notes_button=is_staff(interaction))
+        await interaction.followup.send(embed=embed, view=view)
+
+    # ── /saga-search ─────────────────────────────────────────────────────────
+    @app_commands.command(name="saga-search", description="[Staff] Search for a member's Saga Club profile")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    async def saga_search(self, interaction: discord.Interaction, roblox_username: str):
+        await interaction.response.defer(ephemeral=True)
+        if not is_staff(interaction):
+            await interaction.followup.send("You don't have permission to use this command.", ephemeral=True)
+            return
+        doc = await get_member_by_username(roblox_username)
+        if not doc:
+            await interaction.followup.send(f"No Saga Club profile found for `{roblox_username}`.", ephemeral=True)
+            return
+        embed = build_profile_embed(doc)
+        view  = ProfileView(doc, show_notes_button=True)
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
+    # ── /saga-add ────────────────────────────────────────────────────────────
     @app_commands.command(name="saga-add", description="[Staff] Add Saga Points and Tier Credits to a member")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    @app_commands.checks.has_permissions(manage_roles=True)
-    async def saga_add(
-        self,
-        interaction: discord.Interaction,
-        member: discord.Member,
-        points: int,
-        tier_credits: int,
-    ):
+    async def saga_add(self, interaction: discord.Interaction, member: discord.Member, points: int, tier_credits: int):
         await interaction.response.defer(ephemeral=True)
+        if not is_staff(interaction):
+            await interaction.followup.send("You don't have permission to use this command.", ephemeral=True)
+            return
         doc = await get_member(member.id)
         if not doc:
             await interaction.followup.send("That member does not have a Saga Club profile yet.", ephemeral=True)
             return
-
         updated = await add_points(member.id, points, tier_credits)
-        bloxlink_cog = self.bot.cogs.get("BloxlinkCog")
-        if bloxlink_cog:
-            await bloxlink_cog.update_member_tier(member.id, updated["tier"])
+        await self.handle_tier_change(member.id, updated["old_tier"], updated["tier"])
 
         embed = discord.Embed(
             title="Saga Points Updated",
@@ -285,30 +450,23 @@ class SagaCog(commands.Cog):
         embed.set_footer(text="Icelandair Saga Club", icon_url="https://www.icelandair.com/favicon.ico")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
+    # ── /saga-set ────────────────────────────────────────────────────────────
     @app_commands.command(name="saga-set", description="[Staff] Set a member's Saga Points or Tier Credits to a specific value")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    @app_commands.checks.has_permissions(manage_roles=True)
-    async def saga_set(
-        self,
-        interaction: discord.Interaction,
-        member: discord.Member,
-        points: int = None,
-        tier_credits: int = None,
-    ):
+    async def saga_set(self, interaction: discord.Interaction, member: discord.Member, points: int = None, tier_credits: int = None):
         await interaction.response.defer(ephemeral=True)
-        if points is None and tier_credits is None:
-            await interaction.followup.send("Please provide at least one value to set (points or tier_credits).", ephemeral=True)
+        if not is_staff(interaction):
+            await interaction.followup.send("You don't have permission to use this command.", ephemeral=True)
             return
-
+        if points is None and tier_credits is None:
+            await interaction.followup.send("Please provide at least one value to set.", ephemeral=True)
+            return
         doc = await get_member(member.id)
         if not doc:
             await interaction.followup.send("That member does not have a Saga Club profile yet.", ephemeral=True)
             return
-
         updated = await set_points(member.id, points=points, tier_credits=tier_credits)
-        bloxlink_cog = self.bot.cogs.get("BloxlinkCog")
-        if bloxlink_cog:
-            await bloxlink_cog.update_member_tier(member.id, updated["tier"])
+        await self.handle_tier_change(member.id, updated["old_tier"], updated["tier"])
 
         embed = discord.Embed(
             title="Saga Profile Updated",
@@ -323,29 +481,24 @@ class SagaCog(commands.Cog):
         embed.set_footer(text="Icelandair Saga Club", icon_url="https://www.icelandair.com/favicon.ico")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
+    # ── /saga-logflight ──────────────────────────────────────────────────────
     @app_commands.command(name="saga-logflight", description="[Staff] Log a completed flight for a member")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    @app_commands.checks.has_permissions(manage_roles=True)
     async def saga_logflight(
-        self,
-        interaction: discord.Interaction,
-        member: discord.Member,
-        origin: str,
-        destination: str,
-        aircraft: str,
-        fare_class: str,
-        base_points: int,
+        self, interaction: discord.Interaction,
+        member: discord.Member, origin: str, destination: str,
+        aircraft: str, fare_class: str, base_points: int,
     ):
         await interaction.response.defer(ephemeral=True)
+        if not is_staff(interaction):
+            await interaction.followup.send("You don't have permission to use this command.", ephemeral=True)
+            return
         doc = await get_member(member.id)
         if not doc:
             await interaction.followup.send("That member does not have a Saga Club profile yet.", ephemeral=True)
             return
-
         updated = await log_flight(member.id, origin, destination, fare_class, aircraft, base_points)
-        bloxlink_cog = self.bot.cogs.get("BloxlinkCog")
-        if bloxlink_cog:
-            await bloxlink_cog.update_member_tier(member.id, updated["tier"])
+        await self.handle_tier_change(member.id, updated["old_tier"], updated["tier"])
 
         embed = discord.Embed(
             title="Flight Logged",
@@ -365,20 +518,110 @@ class SagaCog(commands.Cog):
 
     @saga_logflight.autocomplete("fare_class")
     async def fare_class_autocomplete(self, interaction: discord.Interaction, current: str):
-        choices = [
+        return [
             app_commands.Choice(name=label, value=value)
             for value, label in FARE_CLASS_LABELS.items()
             if current.lower() in label.lower()
         ]
-        return choices
 
+    # ── /saga-upgrade ────────────────────────────────────────────────────────
+    @app_commands.command(name="saga-upgrade", description="Use a complimentary upgrade on your booking")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    async def saga_upgrade(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        doc = await self.get_verified_member(interaction)
+        if not doc:
+            return
+        tier = doc.get("tier", "blue")
+        if tier == "blue":
+            await interaction.followup.send("Complimentary upgrades are available for Saga Silver and Gold members only.", ephemeral=True)
+            return
+        if tier == "gold":
+            await interaction.followup.send("✈ As a Saga Gold member, your complimentary upgrades are unlimited. Please contact staff to apply your upgrade.", ephemeral=True)
+            return
+        result = await use_upgrade(interaction.user.id)
+        if result is None:
+            await interaction.followup.send("You have no complimentary upgrades remaining this month. They reset on the 1st of each month.", ephemeral=True)
+            return
+        remaining = result.get("complimentary_upgrades", 0)
+        embed = discord.Embed(
+            title="✈ Upgrade Applied",
+            description=f"Your complimentary upgrade has been used.\n**Remaining this month:** {remaining}",
+            color=TIER_COLORS[tier],
+        )
+        embed.set_footer(text="Icelandair Saga Club", icon_url="https://www.icelandair.com/favicon.ico")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # ── /saga-set-upgrades ───────────────────────────────────────────────────
+    @app_commands.command(name="saga-set-upgrades", description="[Staff] Manually set a member's complimentary upgrade count")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    async def saga_set_upgrades(self, interaction: discord.Interaction, member: discord.Member, count: int):
+        await interaction.response.defer(ephemeral=True)
+        if not is_staff(interaction):
+            await interaction.followup.send("You don't have permission to use this command.", ephemeral=True)
+            return
+        doc = await get_member(member.id)
+        if not doc:
+            await interaction.followup.send("That member does not have a Saga Club profile yet.", ephemeral=True)
+            return
+        updated = await set_upgrades(member.id, count)
+        embed = discord.Embed(
+            title="Upgrades Updated",
+            color=TIER_COLORS[doc.get("tier", "blue")],
+            description=(
+                f"**Member:** {doc.get('roblox_username')}\n"
+                f"**Complimentary upgrades set to:** {count}"
+            )
+        )
+        embed.set_footer(text="Icelandair Saga Club", icon_url="https://www.icelandair.com/favicon.ico")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # ── /saga-note-add ───────────────────────────────────────────────────────
+    @app_commands.command(name="saga-note-add", description="[Staff] Add an internal note to a member's profile")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    async def saga_note_add(self, interaction: discord.Interaction, member: discord.Member, note: str):
+        await interaction.response.defer(ephemeral=True)
+        if not is_staff(interaction):
+            await interaction.followup.send("You don't have permission to use this command.", ephemeral=True)
+            return
+        doc = await get_member(member.id)
+        if not doc:
+            await interaction.followup.send("That member does not have a Saga Club profile yet.", ephemeral=True)
+            return
+        await add_note(member.id, note, interaction.user.display_name)
+        embed = discord.Embed(
+            title="Note Added",
+            color=0x444441,
+            description=f"**Member:** {doc.get('roblox_username')}\n**Note:** {note}"
+        )
+        embed.set_footer(text="Icelandair Saga Club — Internal Use Only")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # ── /saga-note-delete ────────────────────────────────────────────────────
+    @app_commands.command(name="saga-note-delete", description="[Staff] Delete an internal note by number")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    async def saga_note_delete(self, interaction: discord.Interaction, member: discord.Member, note_number: int):
+        await interaction.response.defer(ephemeral=True)
+        if not is_staff(interaction):
+            await interaction.followup.send("You don't have permission to use this command.", ephemeral=True)
+            return
+        doc = await get_member(member.id)
+        if not doc:
+            await interaction.followup.send("That member does not have a Saga Club profile yet.", ephemeral=True)
+            return
+        updated = await delete_note(member.id, note_number - 1)
+        if not updated:
+            await interaction.followup.send(f"Note #{note_number} not found.", ephemeral=True)
+            return
+        await interaction.followup.send(f"Note #{note_number} deleted from {doc.get('roblox_username')}'s profile.", ephemeral=True)
+
+    # ── /saga-leaderboard ────────────────────────────────────────────────────
     @app_commands.command(name="saga-leaderboard", description="View the Saga Club points leaderboard")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
     async def saga_leaderboard(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        from database import members as members_col
-        cursor  = members_col.find().sort("saga_points", -1).limit(10)
-        docs    = await cursor.to_list(length=10)
+        await interaction.response.defer()
+        cursor = members_col.find().sort("saga_points", -1).limit(10)
+        docs   = await cursor.to_list(length=10)
 
         embed = discord.Embed(
             title="<:dbstarcard:1374694940856025128> Saga Club Leaderboard",
@@ -392,16 +635,13 @@ class SagaCog(commands.Cog):
             prefix = medals[i] if i < 3 else f"`#{i+1}`"
             embed.add_field(
                 name=f"{prefix} {doc.get('roblox_username', 'Unknown')}",
-                value=(
-                    f"{TIER_LABELS[doc.get('tier', 'blue')]} • "
-                    f"{doc.get('saga_points', 0):,} pts"
-                ),
+                value=f"{TIER_LABELS[doc.get('tier', 'blue')]} • {doc.get('saga_points', 0):,} pts",
                 inline=False,
             )
 
         embed.set_footer(text="Icelandair Saga Club", icon_url="https://www.icelandair.com/favicon.ico")
         embed.timestamp = datetime.now(timezone.utc)
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot: commands.Bot):
