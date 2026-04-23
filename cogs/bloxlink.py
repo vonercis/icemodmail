@@ -77,12 +77,16 @@ class BloxlinkCog(commands.Cog):
             )
 
             current_tier = doc.get("tier", "blue")
-            correct_tier = calculate_tier(tc_in_window)
+            # Use the stored tier_credits (which includes manually added credits)
+            # rather than recalculating from flight history — this prevents
+            # overwriting credits added via /saga-add
+            stored_tc    = doc.get("tier_credits", 0)
+            correct_tier = calculate_tier(stored_tc)
 
             if correct_tier != current_tier:
                 await members.update_one(
                     {"discord_id": discord_id},
-                    {"$set": {"tier": correct_tier, "tier_credits": tc_in_window}}
+                    {"$set": {"tier": correct_tier}}
                 )
 
             await self.assign_tier_role(guild, guild_member, correct_tier)
