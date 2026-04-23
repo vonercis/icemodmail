@@ -278,7 +278,7 @@ async def restore_saga_class_flight(discord_id: int):
     if current < allowance:
         await members.update_one(
             {"discord_id": discord_id},
-            {"$inc": {"saga_class_flights_remaining": -1}}
+            {"$inc": {"saga_class_flights_remaining": 1}}
         )
 
 
