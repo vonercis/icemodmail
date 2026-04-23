@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BLOXLINK_API_KEY  = os.getenv("BLOXLINK_API_KEY")
-BLOXLINK_BASE_URL = "https://api.bloxlink.me/api/v5/public"
+BLOXLINK_BASE_URL = "https://api.blox.link/v4/public"
 GUILD_ID          = os.getenv("DISCORD_GUILD_ID")
 
 
@@ -22,7 +22,7 @@ async def get_roblox_user(discord_id: int) -> dict | None:
         return None
 
     url = f"{BLOXLINK_BASE_URL}/guilds/{GUILD_ID}/discord-to-roblox/{discord_id}"
-    headers = {"api-key": BLOXLINK_API_KEY}
+    headers = {"Authorization": BLOXLINK_API_KEY}
     print(f"[Bloxlink] Requesting: {url}")
 
     try:
@@ -45,7 +45,7 @@ async def get_roblox_user(discord_id: int) -> dict | None:
                     print(f"[Bloxlink] Non-200 response: {body}")
                     return None
     except aiohttp.ClientConnectorDNSError as e:
-        print(f"[Bloxlink] DNS error - cannot reach api.bloxlink.me: {e}")
+        print(f"[Bloxlink] DNS error - cannot reach api.blox.link: {e}")
         return None
     except Exception as e:
         print(f"[Bloxlink] Unexpected error: {e}")
