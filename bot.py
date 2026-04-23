@@ -26,8 +26,10 @@ async def on_ready():
         except Exception as e:
             print(f"Failed to load cog {cog}: {e}")
     try:
-        synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} slash commands")
+        guild = discord.Object(id=int(os.getenv("DISCORD_GUILD_ID")))
+        bot.tree.copy_global_to(guild=guild)
+        synced = await bot.tree.sync(guild=guild)
+        print(f"Synced {len(synced)} slash commands to guild")
     except Exception as e:
         print(f"Failed to sync commands: {e}")
 
