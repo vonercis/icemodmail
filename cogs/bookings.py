@@ -102,6 +102,10 @@ class CabinSelectView(discord.ui.View):
         saga_remaining   = member_doc.get("saga_class_flights_remaining", 0) if member_doc else 0
         saga_eligible    = tier in ("silver", "gold") and saga_remaining > 0
 
+        # Safety: if Gold somehow has 0 remaining, show correct count
+        if tier == "gold" and saga_remaining == 0:
+            saga_eligible = False
+
         self.eco_button = discord.ui.Button(
             label="💺 Economy",
             style=discord.ButtonStyle.primary,
