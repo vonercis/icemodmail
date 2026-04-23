@@ -130,7 +130,12 @@ def build_announcement_embed(f: dict, event: str) -> discord.Embed:
     descriptions = {
         "scheduled": f"**{fn}** {route} has been scheduled.\n**Date:** {f['date']} · **STD:** {fmt_time(f.get('std'))} · **STA:** {fmt_time(f.get('sta'))}",
         "delayed":   f"**{fn}** {route} has been delayed.\n**New ETD:** {fmt_time(f.get('etd'))}" + (f"\n**Reason:** {f['reason']}" if f.get("reason") else ""),
-        "cancelled": f"**{fn}** {route} on **{f['date']}** has been cancelled." + (f"\n**Reason:** {f['reason']}" if f.get("reason") else ""),
+        "cancelled": (
+            f"**{fn}** {route} on **{f['date']}** has been cancelled."
+            + (f"\n**Reason:** {f['reason']}" if f.get("reason") else "")
+            + "\n\nAll affected passengers have been contacted directly with follow-up instructions. "
+            "If you require further assistance, please contact our customer service team."
+        ),
         "boarding":  f"**{fn}** {route} is now boarding.\n**Gate closes at:** {fmt_time(f.get('etd') or f.get('std'))}",
         "departed":  f"**{fn}** {route} has departed.\n**ATD:** {fmt_time(f.get('atd'))} · **ETA:** {fmt_time(f.get('eta') or f.get('sta'))}",
         "arrived":   f"**{fn}** {route} has arrived.\n**ATA:** {fmt_time(f.get('ata'))}",
@@ -149,18 +154,21 @@ def build_announcement_embed(f: dict, event: str) -> discord.Embed:
     return embed
 
 
-def build_subscriber_dm(f: dict, event: str, discord_id: int) -> discord.Embed:
+async def build_subscriber_dm(f: dict, event: str, discord_id: int) -> discord.Embed:
     """Builds a personalised DM embed for a subscriber."""
     fn    = f["flight_number"]
     route = f"{f['origin']} → {f['destination']}"
     color = STATUS_COLORS.get(f.get("status", "Scheduled"), 0x003B6F)
 
     if event == "cancelled":
+        from database import get_member
+        member_doc  = await get_member(discord_id)
+        roblox_name = member_doc.get("roblox_username", "valued passenger") if member_doc else "valued passenger"
         embed = discord.Embed(
             title=f"Important Notice — Flight {fn} Cancelled",
             color=STATUS_COLORS["Cancelled"],
             description=(
-                f"Dear passenger,\n\n"
+                f"Dear {roblox_name},\n\n"
                 f"We regret to inform you that flight **{fn}** ({route}) "
                 f"on **{f['date']}** has been cancelled"
                 + (f" due to {f['reason'].lower()}." if f.get("reason") else ".")
@@ -465,7 +473,7 @@ class FlightsCog(commands.Cog):
         for discord_id in subscribers:
             try:
                 user  = await self.bot.fetch_user(discord_id)
-                embed = build_subscriber_dm(flight, event, discord_id)
+                embed = await build_subscriber_dm(flight, event, discord_id)
                 await user.send(embed=embed)
             except Exception as e:
                 print(f"[Flights] Could not DM subscriber {discord_id}: {e}")
@@ -551,6 +559,10 @@ class FlightsCog(commands.Cog):
 
         updated = await update_flight(flight_number, updates)
         await self.refresh_board()
+
+        # Auto-close check-in when boarding starts
+        if status == "Boarding":
+            updates["checkin_open"] = False
 
         # Determine event type for announcement and subscriber DMs
         event = "update"
