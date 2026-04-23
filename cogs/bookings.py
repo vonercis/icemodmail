@@ -13,7 +13,7 @@ from database import (
     use_saga_class_flight, set_saga_class_remaining, reset_saga_class_monthly,
 )
 from database_flights import get_flight, STATUS_COLORS
-from bloxlink import get_roblox_user
+from bloxlink_api import get_roblox_user
 from dotenv import load_dotenv
 
 load_dotenv()
