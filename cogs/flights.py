@@ -4,7 +4,7 @@ from discord import app_commands
 import os
 from datetime import datetime, timezone
 from database_aircraft import get_all_aircraft, get_aircraft
-from database_bookings import count_cabin_bookings, get_bookings_for_flight, get_all_bookings_for_flight
+from database_bookings import count_cabin_bookings, get_bookings_for_flight, get_all_bookings_for_flight, clear_flight_bookings
 from database import get_member, SAGA_CLASS_ALLOWANCE
 from database_flights import (
     create_flight, get_flight, get_active_flights, update_flight,
@@ -792,6 +792,42 @@ class FlightsCog(commands.Cog):
 
         embed.set_footer(text="Icelandair Operations — Internal Use Only", icon_url="https://www.icelandair.com/favicon.ico")
         embed.timestamp = datetime.now(timezone.utc)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    # ── /flight-clear-manifest ───────────────────────────────────────────────
+    @app_commands.command(name="flight-clear-manifest", description="[Dispatcher] Clear all bookings for a flight so the flight number can be reused")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    async def flight_clear_manifest(self, interaction: discord.Interaction, flight_number: str):
+        await interaction.response.defer(ephemeral=True)
+        if not is_dispatcher(interaction):
+            await interaction.followup.send("You don't have permission to use this command.", ephemeral=True)
+            return
+
+        flight = await get_flight(flight_number)
+        if not flight:
+            await interaction.followup.send(f"Flight `{flight_number.upper()}` not found.", ephemeral=True)
+            return
+
+        count = await clear_flight_bookings(flight_number)
+
+        # Also remove the flight from the board so the number can be reused
+        from database_flights import flights as flights_col
+        await flights_col.delete_one({"flight_number": flight_number.upper()})
+        await self.refresh_board()
+
+        embed = discord.Embed(
+            title="Manifest Cleared",
+            color=0x003B6F,
+            description=(
+                f"Flight `{flight_number.upper()}` has been removed from the board.
+"
+                f"**{count}** booking(s) cleared.
+
+"
+                f"The flight number `{flight_number.upper()}` is now free to be reused."
+            )
+        )
+        embed.set_footer(text="Icelandair Operations", icon_url="https://www.icelandair.com/favicon.ico")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     # ── /flight-board ─────────────────────────────────────────────────────────
