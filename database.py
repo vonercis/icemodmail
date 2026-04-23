@@ -255,8 +255,6 @@ async def use_saga_class_flight(discord_id: int) -> bool:
         return False
     remaining = member.get("saga_class_flights_remaining", 0)
     tier      = member.get("tier", "blue")
-    if tier == "gold":
-        return True  # Gold has 5/month but we still track usage
     if remaining <= 0:
         return False
     await members.update_one(
