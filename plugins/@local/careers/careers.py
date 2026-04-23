@@ -199,28 +199,18 @@ class IcelandairCareers(commands.Cog):
             view = ReviewView(app["application_id"])
             self.bot.add_view(view)
 
-    @commands.Cog.listener()
-    async def on_thread_initiate(self, thread, creator, category, initial_message):
-        """
-        Cancel Modmail thread creation if the user is mid-application.
-        on_thread_initiate fires before the channel is created, so removing
-        the thread from the cache here aborts the setup process.
-        """
-        if creator.id not in self.active_sessions:
-            return
-
+    async def _block_from_modmail(self, user_id: int):
+        """Temporarily block a user from creating Modmail threads during their application."""
         try:
-            self.bot.threads.cache.pop(creator.id, None)
+            self.bot.blocked_users[str(user_id)] = "careers_application_in_progress"
         except Exception:
             pass
 
+    async def _unblock_from_modmail(self, user_id: int):
+        """Remove the temporary Modmail block once the application is complete."""
         try:
-            await creator.send(
-                f"{EMOJI_ALERT} Your message was not forwarded to the team — "
-                "you have an active application in progress. "
-                "Please complete your application via the questions above."
-            )
-        except discord.Forbidden:
+            self.bot.blocked_users.pop(str(user_id), None)
+        except Exception:
             pass
 
     # ── DB helpers ────────────────────────────────────────────────────────────
@@ -354,6 +344,7 @@ class IcelandairCareers(commands.Cog):
         )
 
         self.active_sessions[member.id] = job_id
+        await self._block_from_modmail(member.id)
         self.bot.loop.create_task(self._run_application_dm(member, job))
 
     async def _run_application_dm(self, user: discord.Member, job: dict):
@@ -396,6 +387,7 @@ class IcelandairCareers(commands.Cog):
                         except asyncio.TimeoutError:
                             # Application expired
                             self.active_sessions.pop(user.id, None)
+                            await self._unblock_from_modmail(user.id)
                             await user.send(
                                 f"{EMOJI_ALERT} **Application Expired**\n\n"
                                 f"Your application for **{job['title']}** has expired due to inactivity. "
@@ -442,6 +434,7 @@ class IcelandairCareers(commands.Cog):
         await view.wait()
 
         self.active_sessions.pop(user.id, None)
+        await self._unblock_from_modmail(user.id)
 
         if not view.confirmed:
             await user.send(
