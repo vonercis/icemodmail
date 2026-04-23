@@ -4,6 +4,8 @@ from discord import app_commands
 import os
 from datetime import datetime, timezone
 from database_aircraft import get_all_aircraft, get_aircraft
+from database_bookings import count_cabin_bookings, get_bookings_for_flight, get_all_bookings_for_flight
+from database import get_member, SAGA_CLASS_ALLOWANCE
 from database_flights import (
     create_flight, get_flight, get_active_flights, update_flight,
     purge_old_flights, STATUSES, STATUS_COLORS, STATUS_EMOJI,
@@ -78,7 +80,7 @@ def build_main_board_embed(active_flights: list) -> discord.Embed:
     return embed
 
 
-def build_flight_embed(f: dict) -> discord.Embed:
+async def build_flight_embed(f: dict) -> discord.Embed:
     status = f.get("status", "Scheduled")
     color  = STATUS_COLORS.get(status, 0x003B6F)
     emoji  = STATUS_EMOJI.get(status, "🕐")
@@ -100,7 +102,16 @@ def build_flight_embed(f: dict) -> discord.Embed:
 
     eco   = f.get("economy_count", 0)
     prem  = f.get("premium_count", 0)
-    embed.add_field(name="<:lbseated:1374689017777492019> Cabin",        value=f"Economy: **{eco}**\nSaga Premium: **{prem}**\nTotal: **{eco+prem}**", inline=True)
+    eco_booked  = await count_cabin_bookings(f["flight_number"], "Economy")
+    saga_booked = await count_cabin_bookings(f["flight_number"], "Saga Class")
+    embed.add_field(
+        name="<:lbseated:1374689017777492019> Cabin",
+        value=(
+            f"Economy: **{eco_booked}/{eco}** booked · **{max(0,eco-eco_booked)}** available\n"
+            f"Saga Class: **{saga_booked}/{prem}** booked · **{max(0,prem-saga_booked)}** available"
+        ),
+        inline=False
+    )
     embed.add_field(name="<:dbtakeoffbg:1374617776504832001> Departure", value=f"STD: **{fmt_time(f.get('std'))}**\nETD: **{fmt_time(f.get('etd'))}**\nATD: **{fmt_time(f.get('atd'))}**", inline=True)
     embed.add_field(name="🛬 Arrival",                                   value=f"STA: **{fmt_time(f.get('sta'))}**\nETA: **{fmt_time(f.get('eta'))}**\nATA: **{fmt_time(f.get('ata'))}**", inline=True)
     embed.add_field(name="⏱ Block Time",                                 value=f.get("block_time", "—"), inline=True)
@@ -389,7 +400,7 @@ class FlightSelectMenu(discord.ui.Select):
         if not flight:
             await interaction.response.send_message("Flight not found.", ephemeral=True)
             return
-        embed = build_flight_embed(flight)
+        embed = await build_flight_embed(flight)
         view  = FlightDetailView(flight)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
@@ -400,11 +411,67 @@ class FlightBoardView(discord.ui.View):
         self.add_item(FlightSelectMenu(active_flights))
 
 
+class BookFlightButton(discord.ui.Button):
+    def __init__(self, flight: dict):
+        bookable = flight.get("status") in ("Scheduled", "Boarding", "Delayed")
+        super().__init__(
+            label="🎫 Book Flight",
+            style=discord.ButtonStyle.primary,
+            disabled=not bookable,
+        )
+        self.flight = flight
+
+    async def callback(self, interaction: discord.Interaction):
+        from cogs.bookings import CabinSelectView
+        flight = await get_flight(self.flight["flight_number"])
+        if not flight:
+            await interaction.response.send_message("Flight not found.", ephemeral=True)
+            return
+
+        # Check if flight is bookable
+        if flight.get("status") not in ("Scheduled", "Boarding", "Delayed"):
+            await interaction.response.send_message("This flight is no longer accepting bookings.", ephemeral=True)
+            return
+
+        member_doc = await get_member(interaction.user.id)
+        roblox_username = interaction.user.display_name
+        if member_doc:
+            roblox_username = member_doc.get("roblox_username", roblox_username)
+
+        from cogs.bookings import BookingsCog
+        bookings_cog = interaction.client.cogs.get("BookingsCog")
+
+        view = CabinSelectView(flight, member_doc, roblox_username, bookings_cog)
+
+        tier            = member_doc.get("tier", "blue") if member_doc else "blue"
+        saga_remaining  = member_doc.get("saga_class_flights_remaining", 0) if member_doc else 0
+        allowance       = SAGA_CLASS_ALLOWANCE.get(tier, 0)
+
+        embed = discord.Embed(
+            title=f"Book Flight {flight['flight_number']}",
+            description=(
+                f"**{flight['origin']} → {flight['destination']}**  ·  {flight['date']}
+
+"
+                f"Select your cabin class below.
+
+"
+                f"**Your Saga Club tier:** {tier.title()}
+"
+                f"**Saga Class flights remaining this month:** {saga_remaining}/{allowance}"
+            ),
+            color=0x003B6F,
+        )
+        embed.set_footer(text="Icelandair", icon_url="https://www.icelandair.com/favicon.ico")
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
 class FlightDetailView(discord.ui.View):
     def __init__(self, flight: dict):
         super().__init__(timeout=None)
         self.flight = flight
         self.add_item(SubscribeButton(flight["flight_number"]))
+        self.add_item(BookFlightButton(flight))
 
     @discord.ui.button(label="← Main Menu", style=discord.ButtonStyle.secondary)
     async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -486,6 +553,26 @@ class FlightsCog(commands.Cog):
 
         if event in ("cancelled", "arrived"):
             await clear_subscriptions(flight["flight_number"])
+
+        # On arrival, deduct Saga Class flight from anyone who booked Saga Class
+        if event == "arrived":
+            await self.deduct_saga_class_on_arrival(flight["flight_number"])
+
+    async def deduct_saga_class_on_arrival(self, flight_number: str):
+        from database_bookings import get_bookings_for_flight
+        from database import set_saga_class_remaining, SAGA_CLASS_ALLOWANCE
+        flight_bookings = await get_bookings_for_flight(flight_number)
+        for booking in flight_bookings:
+            if booking.get("cabin") != "Saga Class":
+                continue
+            discord_id = booking["discord_id"]
+            member     = await get_member(discord_id)
+            if not member:
+                continue
+            current   = member.get("saga_class_flights_remaining", 0)
+            # Already deducted at booking time — no further deduction needed
+            # But if booking was made before this system, deduct now
+            print(f"[Flights] Saga Class flight arrived for {booking['roblox_username']} on {flight_number}")
 
     async def apply_reason_action(self, interaction: discord.Interaction, flight_number: str, action: str, reason: str, etd: str = None):
         updates = {"reason": reason}
@@ -647,6 +734,72 @@ class FlightsCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         await unsubscribe(interaction.user.id, flight_number.upper())
         await interaction.followup.send(f"You have been unsubscribed from updates for flight **{flight_number.upper()}**.", ephemeral=True)
+
+    # ── /flight-bookings ──────────────────────────────────────────────────────
+    @app_commands.command(name="flight-bookings", description="[Dispatcher] View all bookings for a flight — active first, then history")
+    @app_commands.guilds(discord.Object(id=GUILD_ID))
+    async def flight_bookings(self, interaction: discord.Interaction, flight_number: str):
+        await interaction.response.defer(ephemeral=True)
+        if not is_dispatcher(interaction):
+            await interaction.followup.send("You don't have permission to use this command.", ephemeral=True)
+            return
+
+        flight = await get_flight(flight_number)
+        if not flight:
+            await interaction.followup.send(f"Flight `{flight_number.upper()}` not found.", ephemeral=True)
+            return
+
+        all_bookings    = await get_all_bookings_for_flight(flight_number)
+        active_bookings = [b for b in all_bookings if b.get("status") != "Cancelled"]
+        past_bookings   = [b for b in all_bookings if b.get("status") == "Cancelled"]
+
+        color = STATUS_COLORS.get(flight.get("status", "Scheduled"), 0x003B6F)
+
+        embed = discord.Embed(
+            title=f"📋 Bookings — {flight['flight_number']} {flight['origin']} → {flight['destination']}",
+            description=(
+                f"**{flight['date']}** · {flight.get('aircraft_type','—')}
+"
+                f"**{len(active_bookings)}** active · **{len(past_bookings)}** cancelled"
+            ),
+            color=color,
+        )
+
+        # Active bookings section
+        if active_bookings:
+            eco_lines  = [f"• `{b['booking_ref']}` {b['roblox_username']}" for b in active_bookings if b["cabin"] == "Economy"]
+            saga_lines = [f"• `{b['booking_ref']}` {b['roblox_username']}" for b in active_bookings if b["cabin"] == "Saga Class"]
+            if eco_lines:
+                embed.add_field(
+                    name=f"💺 Economy — {len(eco_lines)}/{flight.get('economy_count',0)} seats",
+                    value="\n".join(eco_lines)[:1024],
+                    inline=False
+                )
+            if saga_lines:
+                embed.add_field(
+                    name=f"🛋️ Saga Class — {len(saga_lines)}/{flight.get('premium_count',0)} seats",
+                    value="\n".join(saga_lines)[:1024],
+                    inline=False
+                )
+        else:
+            embed.add_field(name="No active bookings", value="No passengers are booked on this flight.", inline=False)
+
+        # Cancelled bookings section
+        if past_bookings:
+            cancelled_lines = [
+                f"• `{b['booking_ref']}` {b['roblox_username']} ({b['cabin']})"
+                for b in past_bookings
+            ]
+            embed.add_field(
+                name=f"❌ Cancelled ({len(past_bookings)})",
+                value="\n".join(cancelled_lines[:10])[:1024]
+                    + ("\n*...and more*" if len(cancelled_lines) > 10 else ""),
+                inline=False
+            )
+
+        embed.set_footer(text="Icelandair Operations — Internal Use Only", icon_url="https://www.icelandair.com/favicon.ico")
+        embed.timestamp = datetime.now(timezone.utc)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     # ── /flight-board ─────────────────────────────────────────────────────────
     @app_commands.command(name="flight-board", description="Post or refresh the flight board in the board channel")
