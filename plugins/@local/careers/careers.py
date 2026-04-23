@@ -560,16 +560,44 @@ class IcelandairCareers(commands.Cog):
 
         # DM applicant
         applicant = self.bot.get_user(app["user_id"])
-        if applicant and modal.submitted_message:
-            description = f"Thank you for applying for the **{app['job_title']}** position.\n\n{modal.submitted_message}"
-            dm_embed = discord.Embed(
-                title=f"{EMOJI_ALERT} Application {result_word}",
-                description=description,
-                color=color,
-                timestamp=utcnow(),
-            )
+        if applicant:
+            if accepted:
+                dm_embed = discord.Embed(
+                    title=f"✅ Application Accepted — {app['job_title']}",
+                    description=(
+                        f"Congratulations — we are pleased to offer you the position of "
+                        f"**{app['job_title']}** with Icelandair. On behalf of the entire team, "
+                        f"welcome aboard. A member of our team will be in touch shortly with "
+                        f"further details regarding your onboarding."
+                    ),
+                    color=0x57F287,
+                    timestamp=utcnow(),
+                )
+            else:
+                dm_embed = discord.Embed(
+                    title=f"Application Outcome — {app['job_title']}",
+                    description=(
+                        f"Thank you for taking the time to apply for the position of "
+                        f"**{app['job_title']}** with Icelandair. After careful consideration, "
+                        f"we regret to inform you that we will not be moving forward with your "
+                        f"application at this time. We wish you the very best in your future endeavours."
+                    ),
+                    color=0xED4245,
+                    timestamp=utcnow(),
+                )
+
             dm_embed.set_author(name="Icelandair | Careers", icon_url=LOGO_CIRCLE_BLUE_URL)
-            dm_embed.set_footer(text=f"Application ID: {application_id}", icon_url=BASIC_LOGO_URL)
+
+            if modal.submitted_message:
+                quote_label = "Message from the review team"
+                dm_embed.add_field(
+                    name=quote_label,
+                    value=f"*\"{modal.submitted_message}\"*",
+                    inline=False,
+                )
+
+            dm_embed.set_footer(text=f"Icelandair Careers · Application ID: {application_id}", icon_url=BASIC_LOGO_URL)
+
             try:
                 await applicant.send(embed=dm_embed)
             except discord.Forbidden:
