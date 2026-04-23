@@ -48,22 +48,29 @@ async def get_member_by_roblox(roblox_id: int):
     return await members.find_one({"roblox_id": roblox_id})
 
 
+async def get_member_by_username(roblox_username: str):
+    return await members.find_one({"roblox_username": {"$regex": roblox_username, "$options": "i"}})
+
+
 async def create_member(discord_id: int, roblox_id: int, roblox_username: str) -> dict:
     now = datetime.now(timezone.utc)
     doc = {
-        "discord_id":        discord_id,
-        "roblox_id":         roblox_id,
-        "roblox_username":   roblox_username,
-        "saga_number":       generate_saga_number(roblox_id),
-        "member_since":      now,
-        "tier":              "blue",
-        "saga_points":       0,
-        "tier_credits":      0,
-        "points_expiry":     now + timedelta(days=365 * POINTS_EXPIRY_YEARS),
-        "tier_window_start": now,
-        "flights_completed": 0,
-        "last_flight":       None,
-        "flight_history":    [],
+        "discord_id":            discord_id,
+        "roblox_id":             roblox_id,
+        "roblox_username":       roblox_username,
+        "saga_number":           generate_saga_number(roblox_id),
+        "member_since":          now,
+        "tier":                  "blue",
+        "saga_points":           0,
+        "tier_credits":          0,
+        "points_expiry":         now + timedelta(days=365 * POINTS_EXPIRY_YEARS),
+        "tier_window_start":     now,
+        "flights_completed":     0,
+        "last_flight":           None,
+        "flight_history":        [],
+        "complimentary_upgrades": 0,
+        "upgrade_last_reset":    now,
+        "internal_notes":        [],
     }
     await members.insert_one(doc)
     return doc
@@ -75,10 +82,11 @@ async def add_points(discord_id: int, points: int, tier_credits: int) -> dict:
     if not member:
         return None
 
-    new_points       = member["saga_points"] + points
-    new_tc           = member["tier_credits"] + tier_credits
-    new_tier         = calculate_tier(new_tc)
-    new_expiry       = now + timedelta(days=365 * POINTS_EXPIRY_YEARS)
+    new_points  = member["saga_points"] + points
+    new_tc      = member["tier_credits"] + tier_credits
+    new_tier    = calculate_tier(new_tc)
+    new_expiry  = now + timedelta(days=365 * POINTS_EXPIRY_YEARS)
+    old_tier    = member["tier"]
 
     await members.update_one(
         {"discord_id": discord_id},
@@ -89,7 +97,7 @@ async def add_points(discord_id: int, points: int, tier_credits: int) -> dict:
             "points_expiry": new_expiry,
         }}
     )
-    return {**member, "saga_points": new_points, "tier_credits": new_tc, "tier": new_tier}
+    return {**member, "saga_points": new_points, "tier_credits": new_tc, "tier": new_tier, "old_tier": old_tier}
 
 
 async def set_points(discord_id: int, points: int = None, tier_credits: int = None) -> dict:
@@ -97,6 +105,7 @@ async def set_points(discord_id: int, points: int = None, tier_credits: int = No
     if not member:
         return None
 
+    old_tier = member["tier"]
     update = {}
     if points is not None:
         update["saga_points"] = points
@@ -105,7 +114,7 @@ async def set_points(discord_id: int, points: int = None, tier_credits: int = No
         update["tier"] = calculate_tier(tier_credits)
 
     await members.update_one({"discord_id": discord_id}, {"$set": update})
-    return {**member, **update}
+    return {**member, **update, "old_tier": old_tier}
 
 
 async def log_flight(discord_id: int, origin: str, destination: str,
@@ -114,9 +123,10 @@ async def log_flight(discord_id: int, origin: str, destination: str,
     if not member:
         return None
 
-    multiplier     = EARNING_MULTIPLIERS.get(fare_class, 1.0)
-    points_earned  = int(base_points * multiplier)
-    now            = datetime.now(timezone.utc)
+    multiplier    = EARNING_MULTIPLIERS.get(fare_class, 1.0)
+    points_earned = int(base_points * multiplier)
+    now           = datetime.now(timezone.utc)
+    old_tier      = member["tier"]
 
     flight_entry = {
         "origin":        origin.upper(),
@@ -132,10 +142,10 @@ async def log_flight(discord_id: int, origin: str, destination: str,
     if len(history) > FLIGHT_HISTORY_CAP:
         history = history[-FLIGHT_HISTORY_CAP:]
 
-    new_points  = member["saga_points"] + points_earned
-    new_tc      = member["tier_credits"] + points_earned
-    new_tier    = calculate_tier(new_tc)
-    new_expiry  = now + timedelta(days=365 * POINTS_EXPIRY_YEARS)
+    new_points = member["saga_points"] + points_earned
+    new_tc     = member["tier_credits"] + points_earned
+    new_tier   = calculate_tier(new_tc)
+    new_expiry = now + timedelta(days=365 * POINTS_EXPIRY_YEARS)
 
     await members.update_one(
         {"discord_id": discord_id},
@@ -154,8 +164,69 @@ async def log_flight(discord_id: int, origin: str, destination: str,
         "saga_points":       new_points,
         "tier_credits":      new_tc,
         "tier":              new_tier,
+        "old_tier":          old_tier,
         "flights_completed": member["flights_completed"] + 1,
         "last_flight":       flight_entry,
         "flight_history":    history,
         "points_earned":     points_earned,
     }
+
+
+async def set_upgrades(discord_id: int, count: int) -> dict:
+    member = await get_member(discord_id)
+    if not member:
+        return None
+    await members.update_one(
+        {"discord_id": discord_id},
+        {"$set": {"complimentary_upgrades": count}}
+    )
+    return {**member, "complimentary_upgrades": count}
+
+
+async def use_upgrade(discord_id: int) -> dict | None:
+    """Uses one complimentary upgrade. Returns None if none available."""
+    member = await get_member(discord_id)
+    if not member:
+        return None
+    current = member.get("complimentary_upgrades", 0)
+    if current <= 0:
+        return None
+    await members.update_one(
+        {"discord_id": discord_id},
+        {"$set": {"complimentary_upgrades": current - 1}}
+    )
+    return {**member, "complimentary_upgrades": current - 1}
+
+
+async def add_note(discord_id: int, note: str, staff_name: str) -> dict:
+    member = await get_member(discord_id)
+    if not member:
+        return None
+    now = datetime.now(timezone.utc)
+    note_entry = {
+        "text":       note,
+        "staff":      staff_name,
+        "created_at": now,
+    }
+    await members.update_one(
+        {"discord_id": discord_id},
+        {"$push": {"internal_notes": note_entry}}
+    )
+    notes = member.get("internal_notes", [])
+    notes.append(note_entry)
+    return {**member, "internal_notes": notes}
+
+
+async def delete_note(discord_id: int, note_index: int) -> dict:
+    member = await get_member(discord_id)
+    if not member:
+        return None
+    notes = member.get("internal_notes", [])
+    if note_index < 0 or note_index >= len(notes):
+        return None
+    notes.pop(note_index)
+    await members.update_one(
+        {"discord_id": discord_id},
+        {"$set": {"internal_notes": notes}}
+    )
+    return {**member, "internal_notes": notes}
