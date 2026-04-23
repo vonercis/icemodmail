@@ -107,3 +107,12 @@ async def get_all_bookings_for_flight(flight_number: str) -> list:
         ("booked_at", -1)
     ])
     return await cursor.to_list(length=500)
+
+
+async def clear_flight_bookings(flight_number: str) -> int:
+    """Cancels all bookings for a flight and returns the count cleared."""
+    result = await bookings.update_many(
+        {"flight_number": flight_number.upper(), "status": {"$ne": "Cancelled"}},
+        {"$set": {"status": "Cancelled", "cancelled_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc)}}
+    )
+    return result.modified_count
