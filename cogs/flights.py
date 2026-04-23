@@ -819,11 +819,8 @@ class FlightsCog(commands.Cog):
             title="Manifest Cleared",
             color=0x003B6F,
             description=(
-                f"Flight `{flight_number.upper()}` has been removed from the board.
-"
-                f"**{count}** booking(s) cleared.
-
-"
+                f"Flight `{flight_number.upper()}` has been removed from the board.\n"
+                f"**{count}** booking(s) cleared.\n\n"
                 f"The flight number `{flight_number.upper()}` is now free to be reused."
             )
         )
