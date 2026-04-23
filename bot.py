@@ -16,6 +16,7 @@ COGS = [
     "cogs.bloxlink",
     "cogs.flights",
     "cogs.aircraft",
+    "cogs.bookings",
 ]
 
 @bot.event
