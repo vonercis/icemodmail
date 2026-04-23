@@ -333,7 +333,7 @@ class SagaCog(commands.Cog):
         origin: str,
         destination: str,
         aircraft: str,
-        fare_class: app_commands.Choice[str],
+        fare_class: str,
         base_points: int,
     ):
         await interaction.response.defer(ephemeral=True)
@@ -342,7 +342,7 @@ class SagaCog(commands.Cog):
             await interaction.followup.send("That member does not have a Saga Club profile yet.", ephemeral=True)
             return
 
-        updated = await log_flight(member.id, origin, destination, fare_class.value, aircraft, base_points)
+        updated = await log_flight(member.id, origin, destination, fare_class, aircraft, base_points)
         bloxlink_cog = self.bot.cogs.get("BloxlinkCog")
         if bloxlink_cog:
             await bloxlink_cog.update_member_tier(member.id, updated["tier"])
@@ -354,7 +354,7 @@ class SagaCog(commands.Cog):
                 f"**Member:** {doc.get('roblox_username')}\n"
                 f"**Route:** {origin.upper()} → {destination.upper()}\n"
                 f"**Aircraft:** {aircraft}\n"
-                f"**Fare class:** {FARE_CLASS_LABELS.get(fare_class.value, fare_class.value)}\n"
+                f"**Fare class:** {FARE_CLASS_LABELS.get(fare_class, fare_class)}\n"
                 f"**Points earned:** +{updated['points_earned']:,} pts\n"
                 f"**New balance:** {updated['saga_points']:,} pts\n"
                 f"**Tier:** {TIER_LABELS[updated['tier']]}"
