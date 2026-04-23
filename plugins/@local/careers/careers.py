@@ -39,6 +39,7 @@ STANDARD_QUESTIONS = [
     "What is your Discord username (e.g. username#0000 or just username if no discriminator)?",
     "What is your Discord User ID?",
     "What is your timezone (e.g. UTC+0, GMT+10, EST)?",
+    "What is your Roblox username?",
 ]
 
 
