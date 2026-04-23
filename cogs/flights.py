@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import os
 from datetime import datetime, timezone
+from database_aircraft import get_all_aircraft, get_aircraft
 from database_flights import (
     create_flight, get_flight, get_active_flights, update_flight,
     purge_old_flights, STATUSES, STATUS_COLORS, STATUS_EMOJI,
@@ -284,21 +285,18 @@ class ReasonSelectView(discord.ui.View):
 # ── Flight creation modal ─────────────────────────────────────────────────────
 
 class FlightCreateModal(discord.ui.Modal, title="Create New Flight"):
-    flight_number = discord.ui.TextInput(label="Flight Number",       placeholder="e.g. FI123",           max_length=10)
-    origin        = discord.ui.TextInput(label="Origin (IATA)",       placeholder="e.g. KEF",             max_length=3)
-    destination   = discord.ui.TextInput(label="Destination (IATA)",  placeholder="e.g. LHR",             max_length=3)
-    date          = discord.ui.TextInput(label="Date",                 placeholder="e.g. 23 Apr 2025",     max_length=20)
-    aircraft_type = discord.ui.TextInput(label="Aircraft Type",        placeholder="e.g. Boeing 757-200",  max_length=50)
+    flight_number = discord.ui.TextInput(label="Flight Number",      placeholder="e.g. FI123",       max_length=10)
+    origin        = discord.ui.TextInput(label="Origin (IATA)",      placeholder="e.g. KEF",         max_length=3)
+    destination   = discord.ui.TextInput(label="Destination (IATA)", placeholder="e.g. LHR",         max_length=3)
+    date          = discord.ui.TextInput(label="Date",                placeholder="e.g. 23 Apr 2025", max_length=20)
 
-    def __init__(self, registration: str, std: str, sta: str, block_time: str, economy_count: int, premium_count: int, cog=None):
+    def __init__(self, registration: str, std: str, sta: str, block_time: str, cog=None):
         super().__init__()
-        self.reg           = registration
-        self.std           = std
-        self.sta           = sta
-        self.block_time    = block_time
-        self.economy_count = economy_count
-        self.premium_count = premium_count
-        self.cog           = cog
+        self.reg        = registration
+        self.std        = std
+        self.sta        = sta
+        self.block_time = block_time
+        self.cog        = cog
 
     async def on_submit(self, interaction: discord.Interaction):
         existing = await get_flight(str(self.flight_number))
@@ -306,18 +304,24 @@ class FlightCreateModal(discord.ui.Modal, title="Create New Flight"):
             await interaction.response.send_message(f"Flight `{str(self.flight_number).upper()}` already exists. Use `/flight-update` to modify it.", ephemeral=True)
             return
 
+        # Pull aircraft details from registry
+        aircraft_doc = await get_aircraft(self.reg)
+        if not aircraft_doc:
+            await interaction.response.send_message(f"Aircraft `{self.reg}` not found in the registry. Please add it first using `/aircraft-add`.", ephemeral=True)
+            return
+
         doc = await create_flight({
             "flight_number": str(self.flight_number),
             "origin":        str(self.origin),
             "destination":   str(self.destination),
             "date":          str(self.date),
-            "aircraft_type": str(self.aircraft_type),
-            "registration":  self.reg,
+            "aircraft_type": aircraft_doc["aircraft_type"],
+            "registration":  aircraft_doc["registration"],
             "std":           self.std,
             "sta":           self.sta,
             "block_time":    self.block_time,
-            "economy_count": self.economy_count,
-            "premium_count": self.premium_count,
+            "economy_count": aircraft_doc["economy_seats"],
+            "premium_count": aircraft_doc["premium_seats"],
         })
 
         await self.cog.refresh_board()
@@ -327,7 +331,9 @@ class FlightCreateModal(discord.ui.Modal, title="Create New Flight"):
             title="Flight Created", color=0x003B6F,
             description=(
                 f"**{doc['flight_number']}** {str(self.origin).upper()} → {str(self.destination).upper()} added to the board.\n"
-                f"**Date:** {str(self.date)} · **STD:** {self.std} · **STA:** {self.sta}"
+                f"**Aircraft:** {aircraft_doc['aircraft_type']} `{aircraft_doc['registration']}`\n"
+                f"**Date:** {str(self.date)} · **STD:** {self.std} · **STA:** {self.sta}\n"
+                f"**Seats:** Economy {aircraft_doc['economy_seats']} · Saga Premium {aircraft_doc['premium_seats']}"
             )
         )
         embed.set_footer(text="Icelandair Operations", icon_url="https://www.icelandair.com/favicon.ico")
@@ -510,12 +516,24 @@ class FlightsCog(commands.Cog):
     # ── /flight-create ────────────────────────────────────────────────────────
     @app_commands.command(name="flight-create", description="[Dispatcher] Create a new flight on the board")
     @app_commands.guilds(discord.Object(id=GUILD_ID))
-    async def flight_create(self, interaction: discord.Interaction, registration: str, std: str, sta: str, block_time: str, economy_count: int = 0, premium_count: int = 0):
+    async def flight_create(self, interaction: discord.Interaction, registration: str, std: str, sta: str, block_time: str):
         if not is_dispatcher(interaction):
             await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
             return
-        modal = FlightCreateModal(registration=registration, std=std, sta=sta, block_time=block_time, economy_count=economy_count, premium_count=premium_count, cog=self)
+        modal = FlightCreateModal(registration=registration, std=std, sta=sta, block_time=block_time, cog=self)
         await interaction.response.send_modal(modal)
+
+    @flight_create.autocomplete("registration")
+    async def aircraft_registration_autocomplete(self, interaction: discord.Interaction, current: str):
+        all_aircraft = await get_all_aircraft()
+        return [
+            app_commands.Choice(
+                name=f"{a['registration']} — {a['aircraft_type']}",
+                value=a["registration"]
+            )
+            for a in all_aircraft
+            if current.lower() in a["registration"].lower() or current.lower() in a["aircraft_type"].lower()
+        ][:25]
 
     # ── /flight-update ────────────────────────────────────────────────────────
     @app_commands.command(name="flight-update", description="[Dispatcher] Update a flight's details or status")
