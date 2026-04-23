@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import os
 from datetime import datetime, timezone, timedelta
+from database_bookings import get_all_bookings_for_user
 from database import (
     get_member, create_member, add_points, set_points, log_flight,
     set_upgrades, use_upgrade, add_note, delete_note,
@@ -129,14 +130,18 @@ def build_profile_embed(doc: dict) -> discord.Embed:
     embed.add_field(name="<:dbtakeoffbg:1374617776504832001> Flights Completed", value=last_flight_str,                       inline=True)
 
     if tier in ("silver", "gold"):
-        upgrade_str = "Unlimited" if tier == "gold" else f"{upgrades} remaining this month"
+        upgrade_str    = "Unlimited" if tier == "gold" else f"{upgrades} remaining this month"
+        saga_remaining = doc.get("saga_class_flights_remaining", 0)
+        saga_allowance = {"silver": 2, "gold": 5}.get(tier, 0)
+        saga_str       = f"{saga_remaining}/{saga_allowance} remaining this month"
         benefits = {
             "silver": (
                 "<:lbcheckin:1374689021472669738> Priority check-in\n"
                 "<:lblounge:1374689001151135877> Lounge access\n"
                 "<:lbcarryon:1374689023389597797> Extra baggage\n"
                 "<:lbwalking:1374689019593756842> Priority boarding\n"
-                f"✈ Complimentary upgrades: {upgrade_str}"
+                f"✈ Complimentary upgrades: {upgrade_str}\n"
+                f"🛋️ Saga Class flights: {saga_str}"
             ),
             "gold": (
                 "<:lbcheckin:1374689021472669738> Priority check-in\n"
@@ -145,7 +150,8 @@ def build_profile_embed(doc: dict) -> discord.Embed:
                 "<:lbwalking:1374689019593756842> Priority boarding\n"
                 "<:lbwifi:1374689006289424425> Complimentary Wi-Fi\n"
                 "<:lbstarcard:1374688997132996681> Companion card\n"
-                f"✈ Complimentary upgrades: {upgrade_str}"
+                f"✈ Complimentary upgrades: {upgrade_str}\n"
+                f"🛋️ Saga Class flights: {saga_str}"
             ),
         }
         embed.add_field(
@@ -253,6 +259,96 @@ async def send_tier_congrats(bot: commands.Bot, discord_id: int, new_tier: str):
         print(f"[Saga] Could not DM tier congrats to {discord_id}: {e}")
 
 
+
+HISTORY_PER_PAGE = 5
+
+
+def build_booking_upgrade_history_embed(doc: dict, all_bookings: list, page: int) -> tuple[discord.Embed, int]:
+    """Combined booking and upgrade history embed for staff profile view."""
+    tier     = doc.get("tier", "blue")
+    username = doc.get("roblox_username", "Unknown")
+
+    # Build combined entries: bookings + upgrade usage from flight history
+    entries = []
+
+    for b in all_bookings:
+        status_emoji = "✅" if b.get("status") == "Confirmed" else "❌"
+        date_str     = b["booked_at"].strftime("%-d %b %Y") if b.get("booked_at") else "N/A"
+        entries.append({
+            "type":  "booking",
+            "emoji": status_emoji,
+            "title": f"`{b['booking_ref']}` — {b['flight_number']}",
+            "value": f"**Cabin:** {b['cabin']} · **Status:** {b.get('status','—')} · **Date:** {date_str}",
+            "date":  b.get("booked_at"),
+        })
+
+    # Pull upgrade usage from flight history
+    for f in reversed(doc.get("flight_history", [])):
+        if f.get("fare_class") == "saga_premium":
+            date_str = f["date"].strftime("%-d %b %Y") if f.get("date") else "N/A"
+            entries.append({
+                "type":  "upgrade",
+                "emoji": "🛋️",
+                "title": f"Saga Class — {f.get('origin','?')} → {f.get('destination','?')}",
+                "value": f"**Aircraft:** {f.get('aircraft','—')} · **Date:** {date_str} · **Points earned:** {f.get('points_earned',0):,}",
+                "date":  f.get("date"),
+            })
+
+    # Sort combined by date descending
+    entries.sort(key=lambda x: x["date"] or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+
+    total_pages = max(1, math.ceil(len(entries) / HISTORY_PER_PAGE))
+    page        = max(1, min(page, total_pages))
+    start       = (page - 1) * HISTORY_PER_PAGE
+    slice_      = entries[start:start + HISTORY_PER_PAGE]
+
+    embed = discord.Embed(
+        title=f"Booking & Upgrade History — {username}",
+        description=f"Page {page} of {total_pages} · {len(entries)} total entries",
+        color=TIER_COLORS[tier],
+    )
+
+    if not slice_:
+        embed.add_field(name="No history", value="No bookings or upgrades found.", inline=False)
+    else:
+        for e in slice_:
+            embed.add_field(name=f"{e['emoji']} {e['title']}", value=e["value"], inline=False)
+
+    embed.set_footer(
+        text="Icelandair Saga Club — Internal Use Only",
+        icon_url="https://www.icelandair.com/favicon.ico"
+    )
+    embed.timestamp = datetime.now(timezone.utc)
+    return embed, total_pages
+
+
+class BookingUpgradeHistoryView(discord.ui.View):
+    def __init__(self, doc: dict, all_bookings: list, page: int = 1):
+        super().__init__(timeout=120)
+        self.doc          = doc
+        self.all_bookings = all_bookings
+        self.page         = page
+        self._update_buttons()
+
+    def _update_buttons(self):
+        _, total_pages = build_booking_upgrade_history_embed(self.doc, self.all_bookings, self.page)
+        self.prev_button.disabled = self.page <= 1
+        self.next_button.disabled = self.page >= total_pages
+
+    @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.secondary)
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page -= 1
+        self._update_buttons()
+        embed, _ = build_booking_upgrade_history_embed(self.doc, self.all_bookings, self.page)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page += 1
+        self._update_buttons()
+        embed, _ = build_booking_upgrade_history_embed(self.doc, self.all_bookings, self.page)
+        await interaction.response.edit_message(embed=embed, view=self)
+
 class FlightHistoryView(discord.ui.View):
     def __init__(self, doc: dict, page: int = 1):
         super().__init__(timeout=120)
@@ -313,11 +409,23 @@ class ProfileView(discord.ui.View):
         self.doc = doc
         if not show_notes_button:
             self.remove_item(self.notes_button)
+            self.remove_item(self.booking_history_button)
 
     @discord.ui.button(label="✈ Flight History", style=discord.ButtonStyle.primary)
     async def history_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed, _ = build_history_embed(self.doc, page=1)
         view     = FlightHistoryView(self.doc, page=1)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="🗂 Booking & Upgrade History", style=discord.ButtonStyle.secondary)
+    async def booking_history_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not is_staff(interaction):
+            await interaction.response.send_message("You don't have permission to view this.", ephemeral=True)
+            return
+        discord_id  = self.doc.get("discord_id")
+        all_bookings = await get_all_bookings_for_user(discord_id)
+        embed, _    = build_booking_upgrade_history_embed(self.doc, all_bookings, page=1)
+        view        = BookingUpgradeHistoryView(self.doc, all_bookings, page=1)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(label="🔒 Internal Notes", style=discord.ButtonStyle.danger)
