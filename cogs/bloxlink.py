@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands, tasks
 import os
 from database import members, calculate_tier
-from bloxlink import get_roblox_user
+from bloxlink_api import get_roblox_user
 from dotenv import load_dotenv
 from datetime import datetime, timezone, timedelta
 
@@ -94,6 +94,28 @@ class BloxlinkCog(commands.Cog):
     @tier_check_loop.before_loop
     async def before_tier_check(self):
         await self.bot.wait_until_ready()
+        await self.migrate_saga_class_flights()
+
+    async def migrate_saga_class_flights(self):
+        """
+        One-time migration: set saga_class_flights_remaining for any member
+        where it is 0 or missing but their tier entitles them to flights.
+        """
+        from database import SAGA_CLASS_ALLOWANCE
+        count = 0
+        async for doc in members.find():
+            tier      = doc.get("tier", "blue")
+            allowance = SAGA_CLASS_ALLOWANCE.get(tier, 0)
+            current   = doc.get("saga_class_flights_remaining", None)
+            # Only update if field is missing or is 0 but allowance is > 0
+            if allowance > 0 and (current is None or current == 0):
+                await members.update_one(
+                    {"discord_id": doc["discord_id"]},
+                    {"$set": {"saga_class_flights_remaining": allowance}}
+                )
+                count += 1
+        if count:
+            print(f"[Bloxlink] Migrated saga_class_flights_remaining for {count} member(s)")
 
     async def update_member_tier(self, discord_id: int, new_tier: str):
         """
@@ -107,6 +129,15 @@ class BloxlinkCog(commands.Cog):
         if not guild_member:
             return
         await self.assign_tier_role(guild, guild_member, new_tier)
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        """Auto-assign Saga Blue role when someone joins the server."""
+        if member.guild.id != GUILD_ID:
+            return
+        blue_role = member.guild.get_role(TIER_ROLE_IDS["blue"])
+        if blue_role and blue_role not in member.roles:
+            await member.add_roles(blue_role, reason="Saga Club — auto Saga Blue on join")
 
 
 async def setup(bot: commands.Bot):
