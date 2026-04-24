@@ -38,25 +38,31 @@ TIER_NEXT = {
 
 TIER_CONGRATS = {
     "silver": (
-        "<:dbgiftbg:1374617769001226342> **Congratulations — you've reached Saga Silver!**\n\n"
+        "<:sagasilver1:1497040977980817419><:sagasilver2:1497041027905618061> **Congratulations — you've reached Saga Silver!**\n\n"
         "As a Saga Silver member you now have access to:\n"
         "<:lbcheckin:1374689021472669738> Priority check-in\n"
         "<:lblounge:1374689001151135877> Lounge access\n"
         "<:lbcarryon:1374689023389597797> Extra baggage allowance\n"
         "<:lbwalking:1374689019593756842> Priority boarding\n"
-        "1× complimentary upgrade per month\n\n"
+        "<:dbtakeoffbg:1374617776504832001> 2× complimentary upgrades per month\n"
+        "<:lbrecline:1374689009900458015> 2 Saga Class flights per month\n"
+        "<:dbstarcard:1374694940856025128> 1.5× Saga Points on Economy Flex fares\n"
+        "<:dbstarcard:1374694940856025128> 2× Saga Points on Saga Class fares\n\n"
         "Thank you for flying with Icelandair. We look forward to welcoming you on board."
     ),
     "gold": (
-        "<:dbstarcard:1374694940856025128> **Congratulations — you've reached Saga Gold!**\n\n"
+        "<:sagagold1:1497040600279678986><:sagagold2:1497040638091198567> **Congratulations — you've reached Saga Gold!**\n\n"
         "As a Saga Gold member — our highest tier — you now have access to:\n"
         "<:lbcheckin:1374689021472669738> Priority check-in\n"
         "<:lblounge:1374689001151135877> Lounge access\n"
         "<:lbcarryon:1374689023389597797> Extra baggage allowance\n"
         "<:lbwalking:1374689019593756842> Priority boarding\n"
-        "<:lbwifi:1374689006289424425> Complimentary Wi-Fi\n"
-        "<:lbstarcard:1374688997132996681> Companion card\n"
-        "Unlimited complimentary upgrades\n\n"
+        "<:lbwifi:1374689006289424425> Complimentary Wi-Fi on every flight\n"
+        "<:lbstarcard:1374688997132996681> Companion card — a designated member shares your tier benefits\n"
+        "<:dbtakeoffbg:1374617776504832001> 5 complimentary upgrades per month\n"
+        "<:lbrecline:1374689009900458015> 5 Saga Class flights per month\n"
+        "<:dbpersonbg:1374617772855660637> Dedicated Gold member customer service line\n"
+        "<:dbstarcard:1374694940856025128> 2× Saga Points multiplier on all fares\n\n"
         "Thank you for your loyalty to Icelandair. We're honoured to have you as a Gold member."
     ),
 }
@@ -129,6 +135,19 @@ def build_profile_embed(doc: dict) -> discord.Embed:
     embed.add_field(name="<:dbstarcard:1374694940856025128> Saga Points",        value=f"{points:,} pts\n*Expires {expiry_str}*", inline=True)
     embed.add_field(name="<:dbtakeoffbg:1374617776504832001> Flights Completed", value=last_flight_str,                       inline=True)
 
+    if tier == "blue":
+        embed.add_field(
+            name="<:sagablue1:1497039979141005342><:sagablue2:1497039949940134098> Blue Benefits",
+            value=(
+                "<:dbsagacard:1374617767097008148> Access to the Saga Club programme\n"
+                "<:dbstarcard:1374694940856025128> Earn Saga Points on every flight (1× multiplier)\n"
+                "<:dbcalenderbg:1374617779067551786> Points valid for 4 years\n"
+                "<:lbseated:1374689017777492019> Ability to book Economy class flights\n"
+                "<:dbtakeoffbg:1374617776504832001> Access to the flight board and booking system"
+            ),
+            inline=False
+        )
+
     if tier in ("silver", "gold"):
         upgrade_str    = "Unlimited" if tier == "gold" else f"{upgrades} remaining this month"
         saga_remaining = doc.get("saga_class_flights_remaining", 0)
@@ -138,20 +157,24 @@ def build_profile_embed(doc: dict) -> discord.Embed:
             "silver": (
                 "<:lbcheckin:1374689021472669738> Priority check-in\n"
                 "<:lblounge:1374689001151135877> Lounge access\n"
-                "<:lbcarryon:1374689023389597797> Extra baggage\n"
+                "<:lbcarryon:1374689023389597797> Extra baggage allowance\n"
                 "<:lbwalking:1374689019593756842> Priority boarding\n"
                 f"<:dbtakeoffbg:1374617776504832001> Complimentary upgrades: {upgrade_str}\n"
-                f"<:lbrecline:1374689009900458015> Saga Class flights: {saga_str}"
+                f"<:lbrecline:1374689009900458015> Saga Class flights: {saga_str}\n"
+                "<:dbstarcard:1374694940856025128> 1.5× Saga Points on Economy Flex fares\n"
+                "<:dbstarcard:1374694940856025128> 2× Saga Points on Saga Class fares"
             ),
             "gold": (
                 "<:lbcheckin:1374689021472669738> Priority check-in\n"
                 "<:lblounge:1374689001151135877> Lounge access\n"
-                "<:lbcarryon:1374689023389597797> Extra baggage\n"
+                "<:lbcarryon:1374689023389597797> Extra baggage allowance\n"
                 "<:lbwalking:1374689019593756842> Priority boarding\n"
-                "<:lbwifi:1374689006289424425> Complimentary Wi-Fi\n"
-                "<:lbstarcard:1374688997132996681> Companion card\n"
+                "<:lbwifi:1374689006289424425> Complimentary Wi-Fi on every flight\n"
+                "<:lbstarcard:1374688997132996681> Companion card — a designated member shares your tier benefits\n"
                 f"<:dbtakeoffbg:1374617776504832001> Complimentary upgrades: {upgrade_str}\n"
-                f"<:lbrecline:1374689009900458015> Saga Class flights: {saga_str}"
+                f"<:lbrecline:1374689009900458015> Saga Class flights: {saga_str}\n"
+                "<:dbpersonbg:1374617772855660637> Dedicated Gold member customer service line\n"
+                "<:dbstarcard:1374694940856025128> 2× Saga Points multiplier on all fares"
             ),
         }
         embed.add_field(
