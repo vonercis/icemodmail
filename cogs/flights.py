@@ -65,7 +65,7 @@ def build_main_board_embed(active_flights: list) -> discord.Embed:
     else:
         for f in active_flights:
             status = f.get("status", "Scheduled")
-            emoji  = STATUS_EMOJI.get(status, "🕐")
+            emoji  = STATUS_EMOJI.get(status, "<:dbcalenderbg:1374617779067551786>")
             embed.add_field(
                 name=f"{emoji} {f['flight_number']}  •  {f['origin']} → {f['destination']}",
                 value=(
@@ -83,7 +83,7 @@ def build_main_board_embed(active_flights: list) -> discord.Embed:
 async def build_flight_embed(f: dict) -> discord.Embed:
     status = f.get("status", "Scheduled")
     color  = STATUS_COLORS.get(status, 0x003B6F)
-    emoji  = STATUS_EMOJI.get(status, "🕐")
+    emoji  = STATUS_EMOJI.get(status, "<:dbcalenderbg:1374617779067551786>")
 
     checkin_str = "✅ Open" if f.get("checkin_open") else "❌ Closed"
     description = f"{emoji} **{status}**  ·  {f['date']}"
@@ -113,7 +113,7 @@ async def build_flight_embed(f: dict) -> discord.Embed:
         inline=False
     )
     embed.add_field(name="<:dbtakeoffbg:1374617776504832001> Departure", value=f"STD: **{fmt_time(f.get('std'))}**\nETD: **{fmt_time(f.get('etd'))}**\nATD: **{fmt_time(f.get('atd'))}**", inline=True)
-    embed.add_field(name="🛬 Arrival",                                   value=f"STA: **{fmt_time(f.get('sta'))}**\nETA: **{fmt_time(f.get('eta'))}**\nATA: **{fmt_time(f.get('ata'))}**", inline=True)
+    embed.add_field(name="<:dbtakeoffbg:1374617776504832001> Arrival",                                   value=f"STA: **{fmt_time(f.get('sta'))}**\nETA: **{fmt_time(f.get('eta'))}**\nATA: **{fmt_time(f.get('ata'))}**", inline=True)
     embed.add_field(name="⏱ Block Time",                                 value=f.get("block_time", "—"), inline=True)
 
     embed.set_footer(text="Icelandair Operations", icon_url="https://www.icelandair.com/favicon.ico")
@@ -130,13 +130,13 @@ def build_announcement_embed(f: dict, event: str) -> discord.Embed:
 
     titles = {
         "scheduled":  f"<:dbtakeoffbg:1374617776504832001> Flight Scheduled — {fn}",
-        "delayed":    f"⚠️ Flight Delayed — {fn}",
+        "delayed":    f"<:dbalertbg:1374617765142331432> Flight Delayed — {fn}",
         "cancelled":  f"❌ Flight Cancelled — {fn}",
-        "boarding":   f"🚪 Boarding Now — {fn}",
-        "departed":   f"✈️ Flight Departed — {fn}",
-        "arrived":    f"🛬 Flight Arrived — {fn}",
+        "boarding":   f"<:lbwalking:1374689019593756842> Boarding Now — {fn}",
+        "departed":   f"<:dbtakeoffbg:1374617776504832001> Flight Departed — {fn}",
+        "arrived":    f"<:dbtakeoffbg:1374617776504832001> Flight Arrived — {fn}",
         "checkin":    f"<:lbcheckin:1374689021472669738> Check-in Open — {fn}",
-        "update":     f"ℹ️ Flight Update — {fn}",
+        "update":     f"<:dbalertbg:1374617765142331432> Flight Update — {fn}",
     }
 
     descriptions = {
@@ -355,14 +355,14 @@ class FlightCreateModal(discord.ui.Modal, title="Create New Flight"):
 
 class SubscribeButton(discord.ui.Button):
     def __init__(self, flight_number: str):
-        super().__init__(label="🔔 Subscribe to Updates", style=discord.ButtonStyle.success)
+        super().__init__(label="<:dbalertbg:1374617765142331432> Subscribe to Updates", style=discord.ButtonStyle.success)
         self.flight_number = flight_number
 
     async def callback(self, interaction: discord.Interaction):
         newly = await subscribe(interaction.user.id, self.flight_number)
         if newly:
             embed = discord.Embed(
-                title="🔔 Subscribed",
+                title="<:dbalertbg:1374617765142331432> Subscribed",
                 description=(
                     f"You are now subscribed to updates for flight **{self.flight_number}**.\n\n"
                     f"You will receive a direct message whenever this flight is delayed, cancelled, "
@@ -384,7 +384,7 @@ class FlightSelectMenu(discord.ui.Select):
                 label=f"{f['flight_number']}  •  {f['origin']} → {f['destination']}",
                 description=f"{f['date']} · {STATUS_EMOJI.get(f.get('status','Scheduled'), '')} {f.get('status','Scheduled')}",
                 value=f["flight_number"],
-                emoji="✈️",
+                emoji="<:dbtakeoffbg:1374617776504832001>",
             )
             for f in active_flights[:25]
         ]
@@ -415,7 +415,7 @@ class BookFlightButton(discord.ui.Button):
     def __init__(self, flight: dict):
         bookable = flight.get("status") in ("Scheduled", "Boarding", "Delayed")
         super().__init__(
-            label="🎫 Book Flight",
+            label="<:dbsagacard:1374617767097008148> Book Flight",
             style=discord.ButtonStyle.primary,
             disabled=not bookable,
         )
@@ -751,7 +751,7 @@ class FlightsCog(commands.Cog):
         color = STATUS_COLORS.get(flight.get("status", "Scheduled"), 0x003B6F)
 
         embed = discord.Embed(
-            title=f"📋 Bookings — {flight['flight_number']} {flight['origin']} → {flight['destination']}",
+            title=f"<:dbpenbg:1374617771010424912> Bookings — {flight['flight_number']} {flight['origin']} → {flight['destination']}",
             description=(
                 f"**{flight['date']}** · {flight.get('aircraft_type', '—')}\n"
                 f"**{len(active_bookings)}** active · **{len(past_bookings)}** cancelled"
@@ -765,13 +765,13 @@ class FlightsCog(commands.Cog):
             saga_lines = [f"• `{b['booking_ref']}` {b['roblox_username']}" for b in active_bookings if b["cabin"] == "Saga Class"]
             if eco_lines:
                 embed.add_field(
-                    name=f"💺 Economy — {len(eco_lines)}/{flight.get('economy_count',0)} seats",
+                    name=f"<:lbseated:1374689017777492019> Economy — {len(eco_lines)}/{flight.get('economy_count',0)} seats",
                     value="\n".join(eco_lines)[:1024],
                     inline=False
                 )
             if saga_lines:
                 embed.add_field(
-                    name=f"🛋️ Saga Class — {len(saga_lines)}/{flight.get('premium_count',0)} seats",
+                    name=f"<:lbrecline:1374689009900458015> Saga Class — {len(saga_lines)}/{flight.get('premium_count',0)} seats",
                     value="\n".join(saga_lines)[:1024],
                     inline=False
                 )
