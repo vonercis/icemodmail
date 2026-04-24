@@ -83,7 +83,7 @@ def build_manifest_embed(flight: dict, flight_bookings: list) -> discord.Embed:
     eco_list  = "\n".join(f"• {b['roblox_username']} `{b['booking_ref']}`" for b in eco_bookings)  or "No economy bookings"
     saga_list = "\n".join(f"• {b['roblox_username']} `{b['booking_ref']}`" for b in saga_bookings) or "No Saga Class bookings"
 
-    embed.add_field(name=f"<:lbseated:1374689017777492019> Economy ({len(eco_bookings)})",         value=eco_list[:1024],  inline=False)
+    embed.add_field(name=f"💺 Economy ({len(eco_bookings)})",         value=eco_list[:1024],  inline=False)
     embed.add_field(name=f"<:lbrecline:1374689009900458015> Saga Class ({len(saga_bookings)})",     value=saga_list[:1024], inline=False)
     embed.set_footer(text="Icelandair Operations — Internal Use Only", icon_url="https://www.icelandair.com/favicon.ico")
     embed.timestamp = datetime.now(timezone.utc)
@@ -107,13 +107,13 @@ class CabinSelectView(discord.ui.View):
             saga_eligible = False
 
         self.eco_button = discord.ui.Button(
-            label="<:lbseated:1374689017777492019> Economy",
+            label="💺 Economy",
             style=discord.ButtonStyle.primary,
         )
         self.eco_button.callback = self.book_economy
         self.add_item(self.eco_button)
 
-        saga_label = f"<:lbrecline:1374689009900458015> Saga Class ({saga_remaining} remaining)" if saga_eligible else "<:lbrecline:1374689009900458015> Saga Class (not eligible)"
+        saga_label = f"🛋️ Saga Class ({saga_remaining} remaining)" if saga_eligible else "🛋️ Saga Class (not eligible)"
         self.saga_button = discord.ui.Button(
             label=saga_label,
             style=discord.ButtonStyle.success if saga_eligible else discord.ButtonStyle.secondary,
