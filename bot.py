@@ -17,6 +17,7 @@ COGS = [
     "cogs.flights",
     "cogs.aircraft",
     "cogs.bookings",
+    "cogs.careers",
 ]
 
 @bot.event
