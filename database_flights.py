@@ -22,11 +22,11 @@ STATUS_COLORS = {
 }
 
 STATUS_EMOJI = {
-    "Scheduled": "🕐",
-    "Boarding":  "🚪",
-    "Departed":  "✈️",
-    "Arrived":   "🛬",
-    "Delayed":   "⚠️",
+    "Scheduled": "<:dbcalenderbg:1374617779067551786>",
+    "Boarding":  "<:lbwalking:1374689019593756842>",
+    "Departed":  "<:dbtakeoffbg:1374617776504832001>",
+    "Arrived":   "<:dbtakeoffbg:1374617776504832001>",
+    "Delayed":   "<:dbalertbg:1374617765142331432>",
     "Cancelled": "❌",
 }
 
