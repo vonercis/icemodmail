@@ -45,7 +45,7 @@ TIER_CONGRATS = {
         "<:lbcarryon:1374689023389597797> Extra baggage allowance\n"
         "<:lbwalking:1374689019593756842> Priority boarding\n"
         "<:dbtakeoffbg:1374617776504832001> 2× complimentary upgrades per month\n"
-        "<:lbrecline:1374689009900458015> 2 Saga Class flights per month\n"
+        "<:lbrecline:1374689009900458015> 2 complimentary upgrades to Saga Class per month\n"
         "<:dbstarcard:1374694940856025128> 1.5× Saga Points on Economy Flex fares\n"
         "<:dbstarcard:1374694940856025128> 2× Saga Points on Saga Class fares\n\n"
         "Thank you for flying with Icelandair. We look forward to welcoming you on board."
@@ -59,8 +59,7 @@ TIER_CONGRATS = {
         "<:lbwalking:1374689019593756842> Priority boarding\n"
         "<:lbwifi:1374689006289424425> Complimentary Wi-Fi on every flight\n"
         "<:lbstarcard:1374688997132996681> Companion card — a designated member shares your tier benefits\n"
-        "<:dbtakeoffbg:1374617776504832001> 5 complimentary upgrades per month\n"
-        "<:lbrecline:1374689009900458015> 5 Saga Class flights per month\n"
+        "<:lbrecline:1374689009900458015> 5 complimentary upgrades to Saga Class per month\n"
         "<:dbpersonbg:1374617772855660637> Dedicated Gold member customer service line\n"
         "<:dbstarcard:1374694940856025128> 2× Saga Points multiplier on all fares\n\n"
         "Thank you for your loyalty to Icelandair. We're honoured to have you as a Gold member."
@@ -152,7 +151,7 @@ def build_profile_embed(doc: dict) -> discord.Embed:
         upgrade_str    = "Unlimited" if tier == "gold" else f"{upgrades} remaining this month"
         saga_remaining = doc.get("saga_class_flights_remaining", 0)
         saga_allowance = {"silver": 2, "gold": 5}.get(tier, 0)
-        saga_str       = f"{saga_remaining}/{saga_allowance} remaining this month"
+        saga_str       = f"{saga_remaining} complimentary upgrade(s) remaining this month"
         benefits = {
             "silver": (
                 "<:lbcheckin:1374689021472669738> Priority check-in\n"
@@ -160,7 +159,7 @@ def build_profile_embed(doc: dict) -> discord.Embed:
                 "<:lbcarryon:1374689023389597797> Extra baggage allowance\n"
                 "<:lbwalking:1374689019593756842> Priority boarding\n"
                 f"<:dbtakeoffbg:1374617776504832001> Complimentary upgrades: {upgrade_str}\n"
-                f"<:lbrecline:1374689009900458015> Saga Class flights: {saga_str}\n"
+                f"<:lbrecline:1374689009900458015> Complimentary upgrades (Saga Class): {saga_str}\n"
                 "<:dbstarcard:1374694940856025128> 1.5× Saga Points on Economy Flex fares\n"
                 "<:dbstarcard:1374694940856025128> 2× Saga Points on Saga Class fares"
             ),
@@ -171,8 +170,7 @@ def build_profile_embed(doc: dict) -> discord.Embed:
                 "<:lbwalking:1374689019593756842> Priority boarding\n"
                 "<:lbwifi:1374689006289424425> Complimentary Wi-Fi on every flight\n"
                 "<:lbstarcard:1374688997132996681> Companion card — a designated member shares your tier benefits\n"
-                f"<:dbtakeoffbg:1374617776504832001> Complimentary upgrades: {upgrade_str}\n"
-                f"<:lbrecline:1374689009900458015> Saga Class flights: {saga_str}\n"
+                f"<:lbrecline:1374689009900458015> Complimentary upgrades (Saga Class): {saga_str}\n"
                 "<:dbpersonbg:1374617772855660637> Dedicated Gold member customer service line\n"
                 "<:dbstarcard:1374694940856025128> 2× Saga Points multiplier on all fares"
             ),
