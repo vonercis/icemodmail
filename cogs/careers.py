@@ -758,7 +758,7 @@ class CareersCog(commands.Cog):
         )
         embed.add_field(name="Applicant", value=f"`{app['user_tag']}` (`{app['user_id']}`)", inline=False)
         if app.get("reviewer_notes"):
-            embed.add_field(name="🔒 Internal Notes", value=app["reviewer_notes"], inline=False)
+            embed.add_field(name="<:dbpersonbg:1374617772855660637> Internal Notes", value=app["reviewer_notes"], inline=False)
         for i, qa in enumerate(app["answers"], 1):
             label = "Standard" if i <= len(STANDARD_QUESTIONS) else f"Q{i - len(STANDARD_QUESTIONS)}"
             embed.add_field(
