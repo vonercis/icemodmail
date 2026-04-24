@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime, timezone
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 
@@ -626,31 +627,22 @@ class IcelandairCareers(commands.Cog):
             ephemeral=True,
         )
 
-    # ── Staff commands ────────────────────────────────────────────────────────
+    # ── Job creation modal ───────────────────────────────────────────────────────
 
-    @commands.group(name="job", invoke_without_command=True)
-    async def job_group(self, ctx: commands.Context):
-        """Icelandair Careers management commands."""
-        await ctx.send_help(ctx.command)
-
-    @job_group.command(name="create")
-    async def job_create(self, ctx: commands.Context):
-        """Create a new job posting via DM wizard."""
-        if not is_manager(ctx.author):
-            return await ctx.reply(f"{EMOJI_ALERT} You don't have permission to create job postings.")
-
-        await ctx.reply(f"{EMOJI_ALERT} Check your DMs — the job creation wizard has started.")
+    async def _run_job_creation_wizard(self, interaction: discord.Interaction):
+        """DM-based job creation wizard triggered after slash command."""
+        author = interaction.user
 
         def dm_check(m):
-            return m.author.id == ctx.author.id and isinstance(m.channel, discord.DMChannel)
+            return m.author.id == author.id and isinstance(m.channel, discord.DMChannel)
 
         async def ask(prompt: str) -> str | None:
-            await ctx.author.send(prompt)
+            await author.send(prompt)
             try:
                 msg = await self.bot.wait_for("message", check=dm_check, timeout=300)
                 return msg.content.strip()
             except asyncio.TimeoutError:
-                await ctx.author.send(f"{EMOJI_ALERT} Job creation timed out.")
+                await author.send(f"{EMOJI_ALERT} Job creation timed out.")
                 return None
 
         title = await ask(f"{EMOJI_PEN} **Step 1/4** — What is the job title?")
@@ -670,14 +662,14 @@ class IcelandairCareers(commands.Cog):
             submission_channel_id = int(channel_raw)
             channel = self.bot.get_channel(submission_channel_id)
             if not channel:
-                return await ctx.author.send(f"{EMOJI_ALERT} Could not find that channel. Job creation cancelled.")
+                return await author.send(f"{EMOJI_ALERT} Could not find that channel. Job creation cancelled.")
         except ValueError:
-            return await ctx.author.send(f"{EMOJI_ALERT} Invalid channel ID. Job creation cancelled.")
+            return await author.send(f"{EMOJI_ALERT} Invalid channel ID. Job creation cancelled.")
 
-        await ctx.author.send(
+        await author.send(
             f"{EMOJI_PEN} **Step 4/4** — Now enter your custom questions one by one.\n"
             f"You can add up to **{MAX_QUESTIONS}** questions. Send `done` when finished.\n\n"
-            "Note: Discord username, Discord ID, and timezone are already collected automatically."
+            "Note: Discord username, Discord ID, timezone, and Roblox username are already collected automatically."
         )
 
         questions = []
@@ -685,19 +677,19 @@ class IcelandairCareers(commands.Cog):
             try:
                 msg = await self.bot.wait_for("message", check=dm_check, timeout=300)
             except asyncio.TimeoutError:
-                await ctx.author.send(f"{EMOJI_ALERT} Job creation timed out.")
+                await author.send(f"{EMOJI_ALERT} Job creation timed out.")
                 return
 
             if msg.content.strip().lower() == "done":
                 break
             questions.append(msg.content.strip())
-            await ctx.author.send(
+            await author.send(
                 f"✅ Question {len(questions)} saved. Send another or type `done` to finish "
                 f"({MAX_QUESTIONS - len(questions)} remaining)."
             )
 
         if not questions:
-            return await ctx.author.send(f"{EMOJI_ALERT} You must provide at least one custom question. Job creation cancelled.")
+            return await author.send(f"{EMOJI_ALERT} You must provide at least one custom question. Job creation cancelled.")
 
         job_id = short_id()
         await self.coll.insert_one({
@@ -708,11 +700,11 @@ class IcelandairCareers(commands.Cog):
             "submission_channel_id": submission_channel_id,
             "questions": questions,
             "open": True,
-            "created_by": ctx.author.id,
+            "created_by": author.id,
             "created_at": utcnow(),
         })
 
-        await ctx.author.send(
+        await author.send(
             f"✅ **Job posting created!**\n"
             f"Title: **{title}**\n"
             f"Job ID: `{job_id}`\n"
@@ -721,15 +713,36 @@ class IcelandairCareers(commands.Cog):
         )
         await self._update_panel()
 
-    @job_group.command(name="list")
-    async def job_list(self, ctx: commands.Context):
-        """List all job postings."""
-        if not is_manager(ctx.author):
-            return await ctx.reply(f"{EMOJI_ALERT} You don't have permission to view job postings.")
+    # ── Slash commands ────────────────────────────────────────────────────────
 
+    job_slash = app_commands.Group(name="job", description="Icelandair Careers management")
+
+    @job_slash.command(name="create", description="Create a new job posting via DM wizard")
+    async def slash_job_create(self, interaction: discord.Interaction):
+        if not is_manager(interaction.user):
+            return await interaction.response.send_message(
+                f"{EMOJI_ALERT} You don't have permission to create job postings.", ephemeral=True
+            )
+        try:
+            await interaction.user.send(f"{EMOJI_PEN} **Icelandair Careers — Job Creation**\n\nLet's get started!")
+        except discord.Forbidden:
+            return await interaction.response.send_message(
+                f"{EMOJI_ALERT} I couldn't DM you. Please enable Direct Messages and try again.", ephemeral=True
+            )
+        await interaction.response.send_message(
+            f"{EMOJI_ALERT} Check your DMs — the job creation wizard has started.", ephemeral=True
+        )
+        self.bot.loop.create_task(self._run_job_creation_wizard(interaction))
+
+    @job_slash.command(name="list", description="List all job postings")
+    async def slash_job_list(self, interaction: discord.Interaction):
+        if not is_manager(interaction.user):
+            return await interaction.response.send_message(
+                f"{EMOJI_ALERT} You don't have permission to view job postings.", ephemeral=True
+            )
         jobs = await self.coll.find({"type": "job"}).to_list(length=100)
         if not jobs:
-            return await ctx.reply("No job postings found.")
+            return await interaction.response.send_message("No job postings found.", ephemeral=True)
 
         embed = discord.Embed(title="Job Postings", color=EMBED_COLOR)
         embed.set_author(name="Icelandair | Careers", icon_url=LOGO_CIRCLE_BLUE_URL)
@@ -740,50 +753,63 @@ class IcelandairCareers(commands.Cog):
                 value=f"{status} · {job.get('description', '')}",
                 inline=False,
             )
-        await ctx.reply(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @job_group.command(name="close")
-    async def job_close(self, ctx: commands.Context, job_id: str):
-        """Close a job posting by ID."""
-        if not is_manager(ctx.author):
-            return await ctx.reply(f"{EMOJI_ALERT} You don't have permission to close job postings.")
-
+    @job_slash.command(name="close", description="Close a job posting")
+    @app_commands.describe(job_id="The job ID to close")
+    async def slash_job_close(self, interaction: discord.Interaction, job_id: str):
+        if not is_manager(interaction.user):
+            return await interaction.response.send_message(
+                f"{EMOJI_ALERT} You don't have permission to close job postings.", ephemeral=True
+            )
         job = await self._get_job(job_id)
         if not job:
-            return await ctx.reply(f"{EMOJI_ALERT} Job `{job_id}` not found.")
-
+            return await interaction.response.send_message(
+                f"{EMOJI_ALERT} Job `{job_id}` not found.", ephemeral=True
+            )
         await self.coll.update_one({"job_id": job_id}, {"$set": {"open": False}})
-        await ctx.reply(f"✅ Job `{job_id}` (**{job['title']}**) has been closed. Existing applications are still processable.")
+        await interaction.response.send_message(
+            f"✅ Job `{job_id}` (**{job['title']}**) has been closed. Existing applications are still processable.",
+            ephemeral=True,
+        )
         await self._update_panel()
 
-    @job_group.command(name="reopen")
-    async def job_reopen(self, ctx: commands.Context, job_id: str):
-        """Re-open a previously closed job posting."""
-        if not is_manager(ctx.author):
-            return await ctx.reply(f"{EMOJI_ALERT} You don't have permission to reopen job postings.")
-
+    @job_slash.command(name="reopen", description="Reopen a previously closed job posting")
+    @app_commands.describe(job_id="The job ID to reopen")
+    async def slash_job_reopen(self, interaction: discord.Interaction, job_id: str):
+        if not is_manager(interaction.user):
+            return await interaction.response.send_message(
+                f"{EMOJI_ALERT} You don't have permission to reopen job postings.", ephemeral=True
+            )
         job = await self._get_job(job_id)
         if not job:
-            return await ctx.reply(f"{EMOJI_ALERT} Job `{job_id}` not found.")
-
+            return await interaction.response.send_message(
+                f"{EMOJI_ALERT} Job `{job_id}` not found.", ephemeral=True
+            )
         await self.coll.update_one({"job_id": job_id}, {"$set": {"open": True}})
-        await ctx.reply(f"✅ Job `{job_id}` (**{job['title']}**) has been reopened.")
+        await interaction.response.send_message(
+            f"✅ Job `{job_id}` (**{job['title']}**) has been reopened.",
+            ephemeral=True,
+        )
         await self._update_panel()
 
-    @job_group.command(name="applications")
-    async def job_applications(self, ctx: commands.Context, job_id: str):
-        """List all applications for a job."""
-        if not is_manager(ctx.author):
-            return await ctx.reply(f"{EMOJI_ALERT} You don't have permission to view applications.")
-
+    @job_slash.command(name="applications", description="List all applications for a job")
+    @app_commands.describe(job_id="The job ID to list applications for")
+    async def slash_job_applications(self, interaction: discord.Interaction, job_id: str):
+        if not is_manager(interaction.user):
+            return await interaction.response.send_message(
+                f"{EMOJI_ALERT} You don't have permission to view applications.", ephemeral=True
+            )
         job = await self._get_job(job_id)
         if not job:
-            return await ctx.reply(f"{EMOJI_ALERT} Job `{job_id}` not found.")
-
+            return await interaction.response.send_message(
+                f"{EMOJI_ALERT} Job `{job_id}` not found.", ephemeral=True
+            )
         apps = await self.coll.find({"type": "application", "job_id": job_id}).to_list(length=100)
         if not apps:
-            return await ctx.reply(f"No applications found for **{job['title']}**.")
-
+            return await interaction.response.send_message(
+                f"No applications found for **{job['title']}**.", ephemeral=True
+            )
         embed = discord.Embed(title=f"Applications — {job['title']}", color=EMBED_COLOR)
         embed.set_author(name="Icelandair | Careers", icon_url=LOGO_CIRCLE_BLUE_URL)
         for app in apps:
@@ -793,30 +819,33 @@ class IcelandairCareers(commands.Cog):
                 value=f"{status_emoji} {app['status'].capitalize()} · <t:{int(app['submitted_at'].timestamp())}:D>",
                 inline=False,
             )
-        await ctx.reply(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @job_group.command(name="view")
-    async def job_view_application(self, ctx: commands.Context, application_id: str):
-        """View a specific application in full."""
-        if not is_manager(ctx.author):
-            return await ctx.reply(f"{EMOJI_ALERT} You don't have permission to view applications.")
-
+    @job_slash.command(name="view", description="View a specific application in full")
+    @app_commands.describe(application_id="The application ID to view")
+    async def slash_job_view(self, interaction: discord.Interaction, application_id: str):
+        if not is_manager(interaction.user):
+            return await interaction.response.send_message(
+                f"{EMOJI_ALERT} You don't have permission to view applications.", ephemeral=True
+            )
         app = await self._get_application(application_id)
         if not app:
-            return await ctx.reply(f"{EMOJI_ALERT} Application `{application_id}` not found.")
-
+            return await interaction.response.send_message(
+                f"{EMOJI_ALERT} Application `{application_id}` not found.", ephemeral=True
+            )
         embed = discord.Embed(
             title=f"Application — {app['job_title']}",
             color=EMBED_COLOR,
             timestamp=app["submitted_at"],
         )
         embed.set_author(name="Icelandair | Careers", icon_url=LOGO_CIRCLE_BLUE_URL)
-        embed.set_footer(text=f"Application ID: {application_id} · Status: {app['status'].capitalize()}", icon_url=BASIC_LOGO_URL)
+        embed.set_footer(
+            text=f"Application ID: {application_id} · Status: {app['status'].capitalize()}",
+            icon_url=BASIC_LOGO_URL,
+        )
         embed.add_field(name="Applicant", value=f"`{app['user_tag']}` (`{app['user_id']}`)", inline=False)
-
         if app.get("reviewer_notes"):
             embed.add_field(name="🔒 Internal Notes", value=app["reviewer_notes"], inline=False)
-
         for i, qa in enumerate(app["answers"], 1):
             label = "Standard" if i <= len(STANDARD_QUESTIONS) else f"Q{i - len(STANDARD_QUESTIONS)}"
             embed.add_field(
@@ -824,54 +853,44 @@ class IcelandairCareers(commands.Cog):
                 value=qa["answer"][:1024] or "*No answer*",
                 inline=False,
             )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-        await ctx.reply(embed=embed)
-
-    @job_group.command(name="panel")
-    async def job_panel(self, ctx: commands.Context):
-        """Post the persistent careers panel in this channel."""
-        if not is_manager(ctx.author):
-            return await ctx.reply(f"{EMOJI_ALERT} You don't have permission to post the careers panel.")
-
+    @job_slash.command(name="panel", description="Post the persistent careers panel in this channel")
+    async def slash_job_panel(self, interaction: discord.Interaction):
+        if not is_manager(interaction.user):
+            return await interaction.response.send_message(
+                f"{EMOJI_ALERT} You don't have permission to post the careers panel.", ephemeral=True
+            )
         jobs = await self._get_open_jobs()
         embed = self._build_panel_embed(jobs)
-
         if jobs:
             view = JobSelectView(jobs)
             self.bot.add_view(view)
         else:
             view = EmptyPanelView()
 
-        msg = await ctx.send(embed=embed, view=view)
+        await interaction.response.send_message("✅ Posting panel...", ephemeral=True)
+        msg = await interaction.channel.send(embed=embed, view=view)
 
-        # Save panel config so we can edit it later
         await self.coll.update_one(
             {"type": "panel_config"},
             {
                 "$set": {
                     "type": "panel_config",
-                    "guild_id": ctx.guild.id,
-                    "channel_id": ctx.channel.id,
+                    "guild_id": interaction.guild.id,
+                    "channel_id": interaction.channel.id,
                     "message_id": msg.id,
                 }
             },
             upsert=True,
         )
 
-        try:
-            await ctx.message.delete()
-        except discord.Forbidden:
-            pass
-
-
-    @job_group.command(name="help")
-    async def job_help(self, ctx: commands.Context):
-        """Show the careers plugin command reference."""
-        is_mgr = is_manager(ctx.author)
-
+    @job_slash.command(name="help", description="Show the careers plugin command reference")
+    async def slash_job_help(self, interaction: discord.Interaction):
+        is_mgr = is_manager(interaction.user)
         embed = discord.Embed(
-            title=f"<:dblaptopbg:1374617774693023754> Careers Plugin — Command Reference",
-            description="All commands use the `.` prefix.",
+            title="<:dblaptopbg:1374617774693023754> Careers Plugin — Command Reference",
+            description="All commands are slash commands starting with `/job`.",
             color=EMBED_COLOR,
         )
         embed.set_author(name="Icelandair | Careers", icon_url=LOGO_CIRCLE_BLUE_URL)
@@ -880,55 +899,51 @@ class IcelandairCareers(commands.Cog):
         embed.add_field(
             name=f"{EMOJI_PEN} Setup",
             value=(
-                "`.plugin load @local/careers` — Load the careers plugin\n"
-                "`.job panel` — Post the persistent careers panel *(run once only)*"
+                "`/job panel` — Post the persistent careers panel *(run once only)*"
             ),
             inline=False,
         )
-
         if is_mgr:
             embed.add_field(
                 name=f"{EMOJI_TAKEOFF} Job Management",
                 value=(
-                    "`.job create` — Start the DM wizard to create a new job posting\n"
-                    "`.job list` — List all jobs with IDs and open/closed status\n"
-                    "`.job close <id>` — Close a job posting *(panel updates automatically)*\n"
-                    "`.job reopen <id>` — Reopen a previously closed job posting"
+                    "`/job create` — Start the DM wizard to create a new job posting\n"
+                    "`/job list` — List all jobs with IDs and open/closed status\n"
+                    "`/job close <id>` — Close a job posting *(panel updates automatically)*\n"
+                    "`/job reopen <id>` — Reopen a previously closed job posting"
                 ),
                 inline=False,
             )
-
             embed.add_field(
                 name=f"{EMOJI_PERSON} Application Review",
                 value=(
-                    "`.job applications <id>` — List all applications for a job\n"
-                    "`.job view <app_id>` — View a full application including internal notes\n"
-                    "`Accept / Decline buttons` — Appear on each submission in the staff channel, "
-                    "opens a modal for internal notes and the message sent to the applicant"
+                    "`/job applications <id>` — List all applications for a job\n"
+                    "`/job view <app_id>` — View a full application including internal notes\n"
+                    "`Accept / Decline buttons` — Appear on each submission in the staff channel"
                 ),
                 inline=False,
             )
-
         embed.add_field(
             name=f"{EMOJI_ALERT} Automatic Behaviours",
             value=(
                 "**Panel auto-update** — Edits itself with latest roles and a new timestamp on any job change\n"
                 "**Application timeout** — Reminder DM after 1 hour of inactivity, expires after a further hour "
                 "with a log posted to the timeout channel\n"
-                "**Standard questions** — Discord username, ID, and timezone are always collected first "
-                "before any custom questions"
+                "**Standard questions** — Discord username, ID, timezone, and Roblox username are always "
+                "collected first before any custom questions"
             ),
             inline=False,
         )
-
         if not is_mgr:
             embed.set_footer(
                 text="Icelandair Careers · Management commands hidden — insufficient permissions",
                 icon_url=BASIC_LOGO_URL,
             )
-
-        await ctx.reply(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 async def setup(bot):
-    await bot.add_cog(IcelandairCareers(bot))
+    cog = IcelandairCareers(bot)
+    await bot.add_cog(cog)
+    bot.tree.add_command(cog.job_slash)
+    await bot.tree.sync()
