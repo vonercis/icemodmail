@@ -29,10 +29,10 @@ def is_staff(interaction: discord.Interaction) -> bool:
 
 
 def build_confirmation_embed(booking: dict, flight: dict) -> discord.Embed:
-    cabin_emoji = "🛋️" if booking["cabin"] == "Saga Class" else "💺"
+    cabin_emoji = "<:lbrecline:1374689009900458015>" if booking["cabin"] == "Saga Class" else "<:lbseated:1374689017777492019>"
     embed = discord.Embed(
         title="✅ Booking Confirmed",
-        color=STATUS_COLORS.get(flight.get("status", "Scheduled"), 0x003B6F),
+        color=STATUS_COLORS.get(flight.get("status", "Scheduled"), 0x001B71),
         description=(
             f"Your booking for flight **{booking['flight_number']}** has been confirmed.\n\n"
             f"**Booking Reference:** `{booking['booking_ref']}`\n"
@@ -52,8 +52,8 @@ def build_confirmation_embed(booking: dict, flight: dict) -> discord.Embed:
 
 def build_booking_list_embed(user_bookings: list, roblox_username: str) -> discord.Embed:
     embed = discord.Embed(
-        title=f"✈️ Bookings — {roblox_username}",
-        color=0x003B6F,
+        title=f"<:dbtakeoffbg:1374617776504832001> Bookings — {roblox_username}",
+        color=0x001B71,
         description=f"{len(user_bookings)} active booking(s)",
     )
     if not user_bookings:
@@ -75,16 +75,16 @@ def build_manifest_embed(flight: dict, flight_bookings: list) -> discord.Embed:
     saga_bookings = [b for b in flight_bookings if b["cabin"] == "Saga Class"]
 
     embed = discord.Embed(
-        title=f"📋 Manifest — {flight['flight_number']} {flight['origin']} → {flight['destination']}",
-        color=STATUS_COLORS.get(flight.get("status", "Scheduled"), 0x003B6F),
+        title=f"<:dbpenbg:1374617771010424912> Manifest — {flight['flight_number']} {flight['origin']} → {flight['destination']}",
+        color=STATUS_COLORS.get(flight.get("status", "Scheduled"), 0x001B71),
         description=f"**{len(flight_bookings)}** total bookings",
     )
 
     eco_list  = "\n".join(f"• {b['roblox_username']} `{b['booking_ref']}`" for b in eco_bookings)  or "No economy bookings"
     saga_list = "\n".join(f"• {b['roblox_username']} `{b['booking_ref']}`" for b in saga_bookings) or "No Saga Class bookings"
 
-    embed.add_field(name=f"💺 Economy ({len(eco_bookings)})",         value=eco_list[:1024],  inline=False)
-    embed.add_field(name=f"🛋️ Saga Class ({len(saga_bookings)})",     value=saga_list[:1024], inline=False)
+    embed.add_field(name=f"<:lbseated:1374689017777492019> Economy ({len(eco_bookings)})",         value=eco_list[:1024],  inline=False)
+    embed.add_field(name=f"<:lbrecline:1374689009900458015> Saga Class ({len(saga_bookings)})",     value=saga_list[:1024], inline=False)
     embed.set_footer(text="Icelandair Operations — Internal Use Only", icon_url="https://www.icelandair.com/favicon.ico")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
@@ -107,13 +107,13 @@ class CabinSelectView(discord.ui.View):
             saga_eligible = False
 
         self.eco_button = discord.ui.Button(
-            label="💺 Economy",
+            label="<:lbseated:1374689017777492019> Economy",
             style=discord.ButtonStyle.primary,
         )
         self.eco_button.callback = self.book_economy
         self.add_item(self.eco_button)
 
-        saga_label = f"🛋️ Saga Class ({saga_remaining} remaining)" if saga_eligible else "🛋️ Saga Class (not eligible)"
+        saga_label = f"<:lbrecline:1374689009900458015> Saga Class ({saga_remaining} remaining)" if saga_eligible else "<:lbrecline:1374689009900458015> Saga Class (not eligible)"
         self.saga_button = discord.ui.Button(
             label=saga_label,
             style=discord.ButtonStyle.success if saga_eligible else discord.ButtonStyle.secondary,
@@ -282,7 +282,7 @@ class BookingsCog(commands.Cog):
         await set_saga_class_remaining(member.id, count)
         embed = discord.Embed(
             title="Saga Class Flights Updated",
-            color=0x003B6F,
+            color=0x001B71,
             description=f"**{doc.get('roblox_username')}** now has **{count}** Saga Class flight(s) remaining this month."
         )
         embed.set_footer(text="Icelandair Saga Club", icon_url="https://www.icelandair.com/favicon.ico")
@@ -299,7 +299,7 @@ class BookingsCog(commands.Cog):
         await reset_saga_class_monthly()
         embed = discord.Embed(
             title="Saga Class Flights Reset",
-            color=0x003B6F,
+            color=0x001B71,
             description=(
                 "Monthly Saga Class flight allowances have been reset for all members:\n\n"
                 "**Saga Blue:** 0 flights\n"
