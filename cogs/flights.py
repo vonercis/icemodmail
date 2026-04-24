@@ -129,9 +129,9 @@ def build_announcement_embed(f: dict, event: str) -> discord.Embed:
     route  = f"{f['origin']} → {f['destination']}"
 
     titles = {
-        "scheduled":  f"<:dbtakeoffbg:1374617776504832001> Flight Scheduled — {fn}",
+        "scheduled":  f"<:dbcalenderbg:1374617779067551786> Flight Scheduled — {fn}",
         "delayed":    f"<:dbalertbg:1374617765142331432> Flight Delayed — {fn}",
-        "cancelled":  f"❌ Flight Cancelled — {fn}",
+        "cancelled":  f"<:dbalertbg:1374617765142331432> Flight Cancelled — {fn}",
         "boarding":   f"<:lbwalking:1374689019593756842> Boarding Now — {fn}",
         "departed":   f"<:dbtakeoffbg:1374617776504832001> Flight Departed — {fn}",
         "arrived":    f"<:dbtakeoffbg:1374617776504832001> Flight Arrived — {fn}",
@@ -355,7 +355,7 @@ class FlightCreateModal(discord.ui.Modal, title="Create New Flight"):
 
 class SubscribeButton(discord.ui.Button):
     def __init__(self, flight_number: str):
-        super().__init__(label="<:dbalertbg:1374617765142331432> Subscribe to Updates", style=discord.ButtonStyle.success)
+        super().__init__(label="🔔 Subscribe to Updates", style=discord.ButtonStyle.success)
         self.flight_number = flight_number
 
     async def callback(self, interaction: discord.Interaction):
@@ -384,7 +384,7 @@ class FlightSelectMenu(discord.ui.Select):
                 label=f"{f['flight_number']}  •  {f['origin']} → {f['destination']}",
                 description=f"{f['date']} · {STATUS_EMOJI.get(f.get('status','Scheduled'), '')} {f.get('status','Scheduled')}",
                 value=f["flight_number"],
-                emoji="<:dbtakeoffbg:1374617776504832001>",
+                emoji="✈️",
             )
             for f in active_flights[:25]
         ]
@@ -415,7 +415,7 @@ class BookFlightButton(discord.ui.Button):
     def __init__(self, flight: dict):
         bookable = flight.get("status") in ("Scheduled", "Boarding", "Delayed")
         super().__init__(
-            label="<:dbsagacard:1374617767097008148> Book Flight",
+            label="🎫 Book Flight",
             style=discord.ButtonStyle.primary,
             disabled=not bookable,
         )
@@ -765,7 +765,7 @@ class FlightsCog(commands.Cog):
             saga_lines = [f"• `{b['booking_ref']}` {b['roblox_username']}" for b in active_bookings if b["cabin"] == "Saga Class"]
             if eco_lines:
                 embed.add_field(
-                    name=f"<:lbseated:1374689017777492019> Economy — {len(eco_lines)}/{flight.get('economy_count',0)} seats",
+                    name=f"💺 Economy — {len(eco_lines)}/{flight.get('economy_count',0)} seats",
                     value="\n".join(eco_lines)[:1024],
                     inline=False
                 )
