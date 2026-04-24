@@ -411,13 +411,13 @@ class ProfileView(discord.ui.View):
             self.remove_item(self.notes_button)
             self.remove_item(self.booking_history_button)
 
-    @discord.ui.button(label="<:dbtakeoffbg:1374617776504832001> Flight History", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="✈ Flight History", style=discord.ButtonStyle.primary)
     async def history_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed, _ = build_history_embed(self.doc, page=1)
         view     = FlightHistoryView(self.doc, page=1)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="<:dbcalenderbg:1374617779067551786> Booking & Upgrade History", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="🗂 Booking & Upgrade History", style=discord.ButtonStyle.secondary)
     async def booking_history_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_staff(interaction):
             await interaction.response.send_message("You don't have permission to view this.", ephemeral=True)
@@ -428,7 +428,7 @@ class ProfileView(discord.ui.View):
         view        = BookingUpgradeHistoryView(self.doc, all_bookings, page=1)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="<:dbpersonbg:1374617772855660637> Internal Notes", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="🔒 Internal Notes", style=discord.ButtonStyle.danger)
     async def notes_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_staff(interaction):
             await interaction.response.send_message("You don't have permission to view internal notes.", ephemeral=True)
