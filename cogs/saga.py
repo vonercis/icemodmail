@@ -19,15 +19,15 @@ GUILD_ID      = int(os.getenv("DISCORD_GUILD_ID"))
 STAFF_ROLE_ID = int(os.getenv("STAFF_ROLE_ID", 0))
 
 TIER_COLORS = {
-    "blue":   0x003B6F,
-    "silver": 0xD3D1C7,
-    "gold":   0xFFA500,
+    "blue":   0x001B71,
+    "silver": 0xD6CFD5,
+    "gold":   0xEBE4C1,
 }
 
 TIER_LABELS = {
-    "blue":   "● Saga Blue",
-    "silver": "● Saga Silver",
-    "gold":   "● Saga Gold",
+    "blue":   "<:sagablue1:1497039979141005342><:sagablue2:1497039949940134098>",
+    "silver": "<:sagasilver1:1497040977980817419><:sagasilver2:1497041027905618061>",
+    "gold":   "<:sagagold1:1497040600279678986><:sagagold2:1497040638091198567>",
 }
 
 TIER_NEXT = {
@@ -38,7 +38,7 @@ TIER_NEXT = {
 
 TIER_CONGRATS = {
     "silver": (
-        "🎉 **Congratulations — you've reached Saga Silver!**\n\n"
+        "<:dbgiftbg:1374617769001226342> **Congratulations — you've reached Saga Silver!**\n\n"
         "As a Saga Silver member you now have access to:\n"
         "<:lbcheckin:1374689021472669738> Priority check-in\n"
         "<:lblounge:1374689001151135877> Lounge access\n"
@@ -48,7 +48,7 @@ TIER_CONGRATS = {
         "Thank you for flying with Icelandair. We look forward to welcoming you on board."
     ),
     "gold": (
-        "🏆 **Congratulations — you've reached Saga Gold!**\n\n"
+        "<:dbstarcard:1374694940856025128> **Congratulations — you've reached Saga Gold!**\n\n"
         "As a Saga Gold member — our highest tier — you now have access to:\n"
         "<:lbcheckin:1374689021472669738> Priority check-in\n"
         "<:lblounge:1374689001151135877> Lounge access\n"
@@ -140,8 +140,8 @@ def build_profile_embed(doc: dict) -> discord.Embed:
                 "<:lblounge:1374689001151135877> Lounge access\n"
                 "<:lbcarryon:1374689023389597797> Extra baggage\n"
                 "<:lbwalking:1374689019593756842> Priority boarding\n"
-                f"✈ Complimentary upgrades: {upgrade_str}\n"
-                f"🛋️ Saga Class flights: {saga_str}"
+                f"<:dbtakeoffbg:1374617776504832001> Complimentary upgrades: {upgrade_str}\n"
+                f"<:lbrecline:1374689009900458015> Saga Class flights: {saga_str}"
             ),
             "gold": (
                 "<:lbcheckin:1374689021472669738> Priority check-in\n"
@@ -150,8 +150,8 @@ def build_profile_embed(doc: dict) -> discord.Embed:
                 "<:lbwalking:1374689019593756842> Priority boarding\n"
                 "<:lbwifi:1374689006289424425> Complimentary Wi-Fi\n"
                 "<:lbstarcard:1374688997132996681> Companion card\n"
-                f"✈ Complimentary upgrades: {upgrade_str}\n"
-                f"🛋️ Saga Class flights: {saga_str}"
+                f"<:dbtakeoffbg:1374617776504832001> Complimentary upgrades: {upgrade_str}\n"
+                f"<:lbrecline:1374689009900458015> Saga Class flights: {saga_str}"
             ),
         }
         embed.add_field(
@@ -288,7 +288,7 @@ def build_booking_upgrade_history_embed(doc: dict, all_bookings: list, page: int
             date_str = f["date"].strftime("%-d %b %Y") if f.get("date") else "N/A"
             entries.append({
                 "type":  "upgrade",
-                "emoji": "🛋️",
+                "emoji": "<:lbrecline:1374689009900458015>",
                 "title": f"Saga Class — {f.get('origin','?')} → {f.get('destination','?')}",
                 "value": f"**Aircraft:** {f.get('aircraft','—')} · **Date:** {date_str} · **Points earned:** {f.get('points_earned',0):,}",
                 "date":  f.get("date"),
@@ -411,13 +411,13 @@ class ProfileView(discord.ui.View):
             self.remove_item(self.notes_button)
             self.remove_item(self.booking_history_button)
 
-    @discord.ui.button(label="✈ Flight History", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="<:dbtakeoffbg:1374617776504832001> Flight History", style=discord.ButtonStyle.primary)
     async def history_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed, _ = build_history_embed(self.doc, page=1)
         view     = FlightHistoryView(self.doc, page=1)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="🗂 Booking & Upgrade History", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="<:dbcalenderbg:1374617779067551786> Booking & Upgrade History", style=discord.ButtonStyle.secondary)
     async def booking_history_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_staff(interaction):
             await interaction.response.send_message("You don't have permission to view this.", ephemeral=True)
@@ -428,7 +428,7 @@ class ProfileView(discord.ui.View):
         view        = BookingUpgradeHistoryView(self.doc, all_bookings, page=1)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="🔒 Internal Notes", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="<:dbpersonbg:1374617772855660637> Internal Notes", style=discord.ButtonStyle.danger)
     async def notes_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_staff(interaction):
             await interaction.response.send_message("You don't have permission to view internal notes.", ephemeral=True)
@@ -645,7 +645,7 @@ class SagaCog(commands.Cog):
             await interaction.followup.send("Complimentary upgrades are available for Saga Silver and Gold members only.", ephemeral=True)
             return
         if tier == "gold":
-            await interaction.followup.send("✈ As a Saga Gold member, your complimentary upgrades are unlimited. Please contact staff to apply your upgrade.", ephemeral=True)
+            await interaction.followup.send("<:dbtakeoffbg:1374617776504832001> As a Saga Gold member, your complimentary upgrades are unlimited. Please contact staff to apply your upgrade.", ephemeral=True)
             return
         result = await use_upgrade(interaction.user.id)
         if result is None:
@@ -653,7 +653,7 @@ class SagaCog(commands.Cog):
             return
         remaining = result.get("complimentary_upgrades", 0)
         embed = discord.Embed(
-            title="✈ Upgrade Applied",
+            title="<:dbtakeoffbg:1374617776504832001> Upgrade Applied",
             description=f"Your complimentary upgrade has been used.\n**Remaining this month:** {remaining}",
             color=TIER_COLORS[tier],
         )
