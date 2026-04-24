@@ -658,7 +658,10 @@ class CareersCog(commands.Cog):
             return await interaction.response.send_message(
                 f"{EMOJI_ALERT} You don't have permission to view job postings.", ephemeral=True
             )
-        jobs = await coll.find({"job_id": {"$exists": True}}).to_list(length=100)
+        jobs = await coll.find({
+            "job_id": {"$exists": True},
+            "title":  {"$exists": True},
+        }).to_list(length=100)
         if not jobs:
             return await interaction.response.send_message("No job postings found.", ephemeral=True)
 
@@ -667,7 +670,7 @@ class CareersCog(commands.Cog):
         for job in jobs:
             status = "🟢 Open" if job.get("open") else "🔴 Closed"
             embed.add_field(
-                name=f"`{job['job_id']}` — {job['title']}",
+                name=f"`{job.get('job_id', '?')}` — {job.get('title', 'Untitled')}",
                 value=f"{status} · {job.get('description', '')}",
                 inline=False,
             )
