@@ -275,7 +275,7 @@ class CareersCog(commands.Cog):
     # ── DB helpers ────────────────────────────────────────────────────────────
 
     async def _get_open_jobs(self) -> list:
-        cursor = coll.find({"open": True})
+        cursor = coll.find({"open": True, "job_id": {"$exists": True}})
         return await cursor.to_list(length=25)
 
     async def _get_job(self, job_id: str) -> dict | None:
@@ -658,7 +658,7 @@ class CareersCog(commands.Cog):
             return await interaction.response.send_message(
                 f"{EMOJI_ALERT} You don't have permission to view job postings.", ephemeral=True
             )
-        jobs = await coll.find({}).to_list(length=100)
+        jobs = await coll.find({"job_id": {"$exists": True}}).to_list(length=100)
         if not jobs:
             return await interaction.response.send_message("No job postings found.", ephemeral=True)
 
