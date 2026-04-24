@@ -113,7 +113,7 @@ class CabinSelectView(discord.ui.View):
         self.eco_button.callback = self.book_economy
         self.add_item(self.eco_button)
 
-        saga_label = f"🛋️ Saga Class ({saga_remaining} remaining)" if saga_eligible else "🛋️ Saga Class (not eligible)"
+        saga_label = f"🛋️ Complimentary Upgrade — Saga Class ({saga_remaining} remaining)" if saga_eligible else "🛋️ Complimentary Upgrade — Saga Class (not eligible)"
         self.saga_button = discord.ui.Button(
             label=saga_label,
             style=discord.ButtonStyle.success if saga_eligible else discord.ButtonStyle.secondary,
